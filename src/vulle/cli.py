@@ -12,6 +12,7 @@ from vulle.confluence_client import ConfluenceClient, extract_confluence_urls
 from vulle.config import get_settings
 from vulle.jira_client import JiraClient, jira_payload_to_issue
 from vulle.models import JiraIssue
+from vulle.rag.service import RagService
 
 
 app = typer.Typer(help="Vull-E security analysis CLI")
@@ -43,6 +44,22 @@ def analyze_file(path: Path) -> None:
     confluence_pages = payload.get("confluence_pages", [])
     analysis = analyze_jira_issue(issue, confluence_pages)
     console.print_json(analysis.model_dump_json(indent=2))
+
+
+@app.command("rag-index")
+def rag_index(path: Path) -> None:
+    """Index markdown, text, or JSON knowledge documents into Qdrant."""
+    settings = get_settings()
+    count = RagService(settings).index_path(path)
+    console.print(f"[green]Indexed {count} chunk(s) into {settings.qdrant_collection}.[/green]")
+
+
+@app.command("rag-search")
+def rag_search(query: str, limit: int | None = None) -> None:
+    """Search the Qdrant-backed knowledge base."""
+    settings = get_settings()
+    chunks = RagService(settings).search(query, limit)
+    console.print_json(json.dumps([chunk.model_dump() for chunk in chunks], ensure_ascii=False, indent=2))
 
 
 @app.command("banner")

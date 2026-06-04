@@ -6,6 +6,7 @@ from langgraph.graph import END, StateGraph
 from vulle.config import get_settings
 from vulle.llm import LLMClient
 from vulle.models import ConfluencePage, GraphState, JiraIssue, JiraSecurityAnalysis
+from vulle.rag.service import RagService
 
 
 SYSTEM_PROMPT = """You are a senior application security analyst.
@@ -23,10 +24,12 @@ pre-production banking environment.
 def build_jira_analysis_graph() -> Any:
     graph = StateGraph(GraphState)
     graph.add_node("normalize_issue", normalize_issue)
+    graph.add_node("retrieve_context", retrieve_context)
     graph.add_node("extract_security_signals", extract_security_signals)
     graph.add_node("analyze_issue", analyze_issue)
     graph.set_entry_point("normalize_issue")
-    graph.add_edge("normalize_issue", "extract_security_signals")
+    graph.add_edge("normalize_issue", "retrieve_context")
+    graph.add_edge("retrieve_context", "extract_security_signals")
     graph.add_edge("extract_security_signals", "analyze_issue")
     graph.add_edge("analyze_issue", END)
     return graph.compile()
@@ -67,8 +70,26 @@ def normalize_issue(state: GraphState) -> dict[str, Any]:
             }
             for page in state.confluence_pages
         ],
+        "rag_context": [
+            {
+                "source": chunk.source,
+                "title": chunk.title,
+                "score": chunk.score,
+                "text": chunk.text,
+            }
+            for chunk in state.rag_context
+        ],
     }
     return {"normalized_issue": normalized}
+
+
+def retrieve_context(state: GraphState) -> dict[str, Any]:
+    settings = get_settings()
+    try:
+        rag_context = RagService(settings).retrieve_for_issue(state.issue, state.confluence_pages)
+    except Exception:
+        rag_context = []
+    return {"rag_context": rag_context}
 
 
 def extract_security_signals(state: GraphState) -> dict[str, Any]:
@@ -100,6 +121,9 @@ Jira issue:
 
 Detected keyword signals:
 {json.dumps(state.security_signals, ensure_ascii=False, indent=2)}
+
+Retrieved RAG context:
+{json.dumps([chunk.model_dump() for chunk in state.rag_context], ensure_ascii=False, indent=2)}
 
 Required JSON schema:
 {json.dumps(schema, ensure_ascii=False, indent=2)}

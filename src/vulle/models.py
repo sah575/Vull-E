@@ -25,6 +25,15 @@ class ConfluencePage(BaseModel):
     body_text: str
 
 
+class RagChunk(BaseModel):
+    id: str
+    source: str
+    title: str
+    text: str
+    score: float | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class RiskHypothesis(BaseModel):
     title: str
     vulnerability_class: str
@@ -60,6 +69,7 @@ class JiraSecurityAnalysis(BaseModel):
 class GraphState(BaseModel):
     issue: JiraIssue
     confluence_pages: list[ConfluencePage] = Field(default_factory=list)
+    rag_context: list[RagChunk] = Field(default_factory=list)
     normalized_issue: dict[str, Any] = Field(default_factory=dict)
     security_signals: dict[str, Any] = Field(default_factory=dict)
     analysis: JiraSecurityAnalysis | None = None
