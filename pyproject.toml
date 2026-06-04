@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vulle"
+version = "0.1.0"
+description = "Agentic pre-deployment security analysis prototype"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "httpx>=0.27.0",
+  "langgraph>=0.2.60",
+  "pydantic>=2.7.0",
+  "pydantic-settings>=2.2.1",
+  "python-dotenv>=1.0.1",
+  "rich>=13.7.0",
+  "typer>=0.12.3",
+]
+
+[project.scripts]
+vulle = "vulle.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]

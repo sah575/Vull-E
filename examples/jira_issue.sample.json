@@ -1,0 +1,25 @@
+{
+  "key": "BANK-123",
+  "summary": "Add customer document approval screen for branch users",
+  "description": "Branch users can view uploaded customer documents and approve or reject them before account activation. The page receives customerId and documentId from the URL. Maker users upload documents, checker users approve documents. Rejected documents can be re-uploaded by maker users. Acceptance Criteria: Branch checker can only approve documents for customers assigned to their branch. Maker users cannot approve documents. Customer PII must be masked unless the user has checker role. All approve and reject actions must be audited.",
+  "issue_type": "Story",
+  "status": "Ready for Deploy",
+  "priority": "High",
+  "labels": ["pre-deploy", "branch", "documents"],
+  "components": ["Customer Onboarding"],
+  "comments": [
+    "Backend added GET /customers/{customerId}/documents/{documentId}",
+    "Approval endpoint is POST /customers/{customerId}/documents/{documentId}/approve",
+    "Reject endpoint is POST /customers/{customerId}/documents/{documentId}/reject",
+    "Functional analysis: https://bank.example.com/wiki/spaces/SEC/pages/123456789/Customer+Document+Approval"
+  ],
+  "confluence_pages": [
+    {
+      "id": "123456789",
+      "title": "Customer Document Approval Functional Analysis",
+      "url": "https://bank.example.com/wiki/spaces/SEC/pages/123456789/Customer+Document+Approval",
+      "space_key": "SEC",
+      "body_text": "Roles: Maker can upload and re-upload documents. Checker can approve or reject documents. Branch restriction: Checker can only view and approve customers assigned to the same branch. Data handling: national id, phone number and address must be masked for maker users. Audit: approve and reject actions must include actor id, role, branch id, customer id, document id and timestamp. API: GET /customers/{customerId}/documents/{documentId}, POST /customers/{customerId}/documents/{documentId}/approve, POST /customers/{customerId}/documents/{documentId}/reject."
+    }
+  ]
+}
