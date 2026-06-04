@@ -34,6 +34,13 @@ class RagChunk(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class RagSource(BaseModel):
+    source: str
+    title: str
+    score: float | None = None
+    chunk_id: str | None = None
+
+
 class RiskHypothesis(BaseModel):
     title: str
     vulnerability_class: str
@@ -56,6 +63,9 @@ class TestIdea(BaseModel):
 
 class JiraSecurityAnalysis(BaseModel):
     issue_key: str
+    rag_status: Literal["not_configured", "ok", "empty", "failed"] = "not_configured"
+    rag_error: str | None = None
+    rag_sources: list[RagSource] = Field(default_factory=list)
     change_summary: str
     business_flows: list[str] = Field(default_factory=list)
     assets_or_entry_points: list[str] = Field(default_factory=list)
@@ -70,6 +80,8 @@ class GraphState(BaseModel):
     issue: JiraIssue
     confluence_pages: list[ConfluencePage] = Field(default_factory=list)
     rag_context: list[RagChunk] = Field(default_factory=list)
+    rag_status: Literal["not_configured", "ok", "empty", "failed"] = "not_configured"
+    rag_error: str | None = None
     normalized_issue: dict[str, Any] = Field(default_factory=dict)
     security_signals: dict[str, Any] = Field(default_factory=dict)
     analysis: JiraSecurityAnalysis | None = None

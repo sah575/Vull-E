@@ -1,0 +1,40 @@
+[
+  {
+    "query": "maker checker document approval branch scope customerId documentId",
+    "must_retrieve": [
+      "portswigger/access-control-testing-methodology.md",
+      "mitre/cwe-access-control-authorization.md",
+      "internal/role-matrix.template.md"
+    ]
+  },
+  {
+    "query": "file upload document preview OCR MIME extension download authorization",
+    "must_retrieve": [
+      "portswigger/file-upload-testing-methodology.md",
+      "owasp/file-upload-download.md",
+      "mitre/cwe-file-upload-deserialization.md"
+    ]
+  },
+  {
+    "query": "webhook callback URL fetch SSRF private IP metadata service",
+    "must_retrieve": [
+      "portswigger/ssrf-testing-methodology.md",
+      "owasp/ssrf-external-integrations.md"
+    ]
+  },
+  {
+    "query": "PII masking audit logging KVKK export report sensitive data",
+    "must_retrieve": [
+      "internal/data-masking-standard.template.md",
+      "internal/audit-logging-standard.template.md",
+      "mitre/cwe-sensitive-data-logging.md"
+    ]
+  },
+  {
+    "query": "GraphQL mutation resolver nested fields field-level authorization",
+    "must_retrieve": [
+      "portswigger/graphql-testing-methodology.md",
+      "owasp/graphql-security.md"
+    ]
+  }
+]

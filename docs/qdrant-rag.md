@@ -45,6 +45,7 @@ For local development:
 docker compose up -d qdrant
 vulle rag-index docs/knowledge
 vulle rag-search "maker checker approval"
+vulle rag-eval tests/rag_eval_cases.json
 ```
 
 Recommended knowledge layout:
@@ -64,3 +65,7 @@ secrets, tokens, production credentials, or real customer data.
 RAG context is not proof of a vulnerability. It should be used to generate and
 rank hypotheses. Jira, Confluence, internal rules, and later Burp evidence are
 needed before reporting a validated finding.
+
+Vull-E exposes RAG health in the analysis JSON through `rag_status`, `rag_error`,
+and `rag_sources`. Retrieval failures should be visible to reviewers and should
+not be silently treated as a complete analysis.

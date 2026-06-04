@@ -62,6 +62,44 @@ def rag_search(query: str, limit: int | None = None) -> None:
     console.print_json(json.dumps([chunk.model_dump() for chunk in chunks], ensure_ascii=False, indent=2))
 
 
+@app.command("rag-eval")
+def rag_eval(path: Path, limit: int | None = None) -> None:
+    """Evaluate whether expected knowledge sources are retrieved for sample queries."""
+    settings = get_settings()
+    service = RagService(settings)
+    cases = json.loads(path.read_text(encoding="utf-8"))
+    results = []
+    total_expected = 0
+    total_hits = 0
+    for case in cases:
+        query = case["query"]
+        expected = case.get("must_retrieve", [])
+        chunks = service.search(query, limit or settings.rag_top_k)
+        sources = [chunk.source for chunk in chunks]
+        hits = [
+            item
+            for item in expected
+            if any(item in source for source in sources)
+        ]
+        total_expected += len(expected)
+        total_hits += len(hits)
+        results.append(
+            {
+                "query": query,
+                "expected": expected,
+                "hits": hits,
+                "misses": [item for item in expected if item not in hits],
+                "retrieved_sources": sources,
+                "hit_rate": len(hits) / len(expected) if expected else 1.0,
+            }
+        )
+    output = {
+        "cases": results,
+        "overall_hit_rate": total_hits / total_expected if total_expected else 1.0,
+    }
+    console.print_json(json.dumps(output, ensure_ascii=False, indent=2))
+
+
 @app.command("banner")
 def show_banner() -> None:
     """Print the Vull-E banner."""

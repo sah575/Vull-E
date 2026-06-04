@@ -135,6 +135,12 @@ Search the knowledge base:
 vulle rag-search "maker checker document approval"
 ```
 
+Evaluate whether expected sources are retrieved for sample queries:
+
+```bash
+vulle rag-eval tests/rag_eval_cases.json
+```
+
 Output is written to stdout as JSON.
 
 ## Architecture
@@ -150,6 +156,10 @@ CLI
       -> test plan
       -> final structured report
 ```
+
+The analysis output includes `rag_status`, `rag_error`, and `rag_sources` so a
+reviewer can tell whether the report used RAG context or fell back to Jira and
+Confluence only.
 
 The graph state is intentionally generic so later agents can append recon
 results, Burp MCP evidence, and validation outcomes without rewriting the Jira

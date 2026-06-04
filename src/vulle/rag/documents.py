@@ -14,22 +14,59 @@ def load_documents(path: Path) -> list[RagChunk]:
     for file_path in files:
         text = file_path.read_text(encoding="utf-8")
         title = _title_for(file_path, text)
-        for index, chunk_text in enumerate(chunk_text_by_words(text)):
-            chunk_id = stable_chunk_id(str(file_path), index, chunk_text)
-            chunks.append(
-                RagChunk(
-                    id=chunk_id,
-                    source=str(file_path),
-                    title=title,
-                    text=chunk_text,
-                    metadata={
-                        "source": str(file_path),
-                        "title": title,
-                        "chunk_index": index,
-                    },
+        sections = chunk_markdown_sections(text) if file_path.suffix.lower() == ".md" else [("", text)]
+        chunk_index = 0
+        for section_title, section_text in sections:
+            for chunk_text in chunk_text_by_words(section_text):
+                chunk_id = stable_chunk_id(str(file_path), chunk_index, chunk_text)
+                chunks.append(
+                    RagChunk(
+                        id=chunk_id,
+                        source=str(file_path),
+                        title=section_title or title,
+                        text=chunk_text,
+                        metadata={
+                            "source": str(file_path),
+                            "title": title,
+                            "section": section_title,
+                            "chunk_index": chunk_index,
+                            "source_type": _source_type(file_path),
+                        },
+                    )
                 )
-            )
+                chunk_index += 1
     return chunks
+
+
+def chunk_markdown_sections(text: str, max_section_words: int = 700) -> list[tuple[str, str]]:
+    sections: list[tuple[str, list[str]]] = []
+    current_title = ""
+    current_lines: list[str] = []
+
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            if current_lines:
+                sections.append((current_title, current_lines))
+            current_title = stripped.lstrip("#").strip()
+            current_lines = [line]
+        else:
+            current_lines.append(line)
+    if current_lines:
+        sections.append((current_title, current_lines))
+
+    result: list[tuple[str, str]] = []
+    for section_title, lines in sections:
+        section_text = "\n".join(lines).strip()
+        if not section_text:
+            continue
+        if len(section_text.split()) <= max_section_words:
+            result.append((section_title, section_text))
+            continue
+        for index, chunk in enumerate(chunk_text_by_words(section_text, chunk_words=max_section_words, overlap_words=80)):
+            suffix = f" part {index + 1}" if section_title else ""
+            result.append((f"{section_title}{suffix}".strip(), chunk))
+    return result
 
 
 def chunk_text_by_words(text: str, chunk_words: int = 350, overlap_words: int = 60) -> list[str]:
@@ -70,3 +107,16 @@ def _title_for(path: Path, text: str) -> str:
         if stripped:
             return stripped[:120]
     return path.stem
+
+
+def _source_type(path: Path) -> str:
+    parts = set(path.parts)
+    if "internal" in parts:
+        return "internal"
+    if "portswigger" in parts:
+        return "portswigger"
+    if "mitre" in parts:
+        return "mitre"
+    if "owasp" in parts:
+        return "owasp"
+    return "local"

@@ -5,7 +5,7 @@ from langgraph.graph import END, StateGraph
 
 from vulle.config import get_settings
 from vulle.llm import LLMClient
-from vulle.models import ConfluencePage, GraphState, JiraIssue, JiraSecurityAnalysis
+from vulle.models import ConfluencePage, GraphState, JiraIssue, JiraSecurityAnalysis, RagSource
 from vulle.rag.service import RagService
 
 
@@ -79,6 +79,8 @@ def normalize_issue(state: GraphState) -> dict[str, Any]:
             }
             for chunk in state.rag_context
         ],
+        "rag_status": state.rag_status,
+        "rag_error": state.rag_error,
     }
     return {"normalized_issue": normalized}
 
@@ -87,9 +89,17 @@ def retrieve_context(state: GraphState) -> dict[str, Any]:
     settings = get_settings()
     try:
         rag_context = RagService(settings).retrieve_for_issue(state.issue, state.confluence_pages)
-    except Exception:
-        rag_context = []
-    return {"rag_context": rag_context}
+    except Exception as exc:
+        return {
+            "rag_context": [],
+            "rag_status": "failed",
+            "rag_error": f"{exc.__class__.__name__}: {exc}",
+        }
+    return {
+        "rag_context": rag_context,
+        "rag_status": "ok" if rag_context else "empty",
+        "rag_error": None,
+    }
 
 
 def extract_security_signals(state: GraphState) -> dict[str, Any]:
@@ -125,8 +135,27 @@ Detected keyword signals:
 Retrieved RAG context:
 {json.dumps([chunk.model_dump() for chunk in state.rag_context], ensure_ascii=False, indent=2)}
 
+RAG retrieval status:
+{json.dumps({"status": state.rag_status, "error": state.rag_error}, ensure_ascii=False, indent=2)}
+
 Required JSON schema:
 {json.dumps(schema, ensure_ascii=False, indent=2)}
 """
     analysis = llm.complete_json(SYSTEM_PROMPT, user_prompt, JiraSecurityAnalysis)
+    rag_sources = [
+        RagSource(
+            source=chunk.source,
+            title=chunk.title,
+            score=chunk.score,
+            chunk_id=chunk.id,
+        )
+        for chunk in state.rag_context
+    ]
+    analysis = analysis.model_copy(
+        update={
+            "rag_status": state.rag_status,
+            "rag_error": state.rag_error,
+            "rag_sources": rag_sources,
+        }
+    )
     return {"analysis": analysis}
