@@ -5,7 +5,7 @@ import httpx
 from pydantic import BaseModel, Field
 from qdrant_client import QdrantClient
 
-from vulle.config import Settings, active_profile_name
+from vulle.config import Settings, active_profile_name, rag_scope
 
 
 class DoctorCheck(BaseModel):
@@ -25,6 +25,7 @@ def run_doctor(settings: Settings, *, offline: bool = False) -> DoctorReport:
     checks = [
         _jira_configuration_check(settings),
         _confluence_configuration_check(settings),
+        _rag_scope_check(settings),
         _rag_weight_check(settings),
     ]
     if offline:
@@ -86,6 +87,7 @@ def _confluence_configuration_check(settings: Settings) -> DoctorCheck:
         settings.jira_email,
         settings.jira_api_token,
     ]
+    status: Literal["pass", "warn", "fail"]
     if all(explicit):
         message = "Confluence URL and credentials are configured."
         status = "pass"
@@ -118,6 +120,15 @@ def _rag_weight_check(settings: Settings) -> DoctorCheck:
         status="pass",
         message="RAG reranking weights are valid.",
         details={"total": total},
+    )
+
+
+def _rag_scope_check(settings: Settings) -> DoctorCheck:
+    return DoctorCheck(
+        name="rag_scope",
+        status="pass",
+        message="RAG tenant scope is configured.",
+        details=rag_scope(settings),
     )
 
 

@@ -63,6 +63,7 @@ CONFLUENCE_API_TOKEN=your-token
 LLM_BASE_URL=http://127.0.0.1:8000/v1
 LLM_API_KEY=local-not-needed
 LLM_MODEL=gpt-oss-120b
+PII_REDACTION_MODE=off
 
 EMBEDDING_BASE_URL=http://127.0.0.1:8000/v1
 EMBEDDING_API_KEY=local-not-needed
@@ -71,6 +72,7 @@ EMBEDDING_DIMENSIONS=1024
 
 QDRANT_URL=http://127.0.0.1:6333
 QDRANT_COLLECTION=vulle_knowledge
+RAG_ENVIRONMENT=preprod
 
 RAG_CANDIDATE_MULTIPLIER=4
 RAG_DENSE_WEIGHT=0.65
@@ -116,6 +118,22 @@ vulle --profile /secure/configs/bank-a.env doctor
 Profile values override the shared `.env`. A target may override
 `QDRANT_COLLECTION` to isolate its internal knowledge. Do not commit profile
 files because they contain credentials.
+
+Set `PII_REDACTION_MODE=mask` in profiles where common email, phone, Turkish
+national ID, IBAN, and card-like values must be masked before embedding and LLM
+analysis. Secrets and credentials are always redacted; `off` only disables the
+optional PII layer.
+
+Each profile should define a stable RAG scope:
+
+```env
+RAG_TENANT_ID=bank-a
+RAG_ENVIRONMENT=preprod
+RAG_KNOWLEDGE_BASE_ID=bank-a-security-v1
+```
+
+Every Qdrant search and delete operation is filtered by all three values.
+Collection separation remains useful, but it is not the only isolation control.
 
 ## Doctor
 
@@ -167,11 +185,18 @@ vulle analyze-file examples/jira_issue.sample.json --output .vulle/reports/repor
 Index local RAG knowledge into Qdrant:
 
 ```bash
-vulle rag-index docs/knowledge
+vulle rag-index docs/knowledge --sync
 ```
 
-Re-run `rag-index` after upgrading an existing installation so Qdrant receives
-the source-priority, template, and control-area metadata used by reranking.
+Normal indexing replaces old chunks for documents currently present. `--sync`
+also removes chunks for files deleted from that index root. Use `--sync` after
+upgrading so Qdrant receives scope, document version, source-priority, template,
+and control-area metadata.
+
+Collections indexed by an older Vull-E version do not contain tenant scope
+metadata. Use a new collection name or recreate the old collection once during
+migration, then run `rag-index --sync`. Legacy unscoped points are intentionally
+invisible to scoped searches.
 
 The starter knowledge base includes OWASP-inspired notes under
 `docs/knowledge/owasp/` plus small local examples for access control, IDOR, and
@@ -258,15 +283,52 @@ preferred; `.template` files receive a low trust score and must not be treated
 as bank policy. This is a compatibility-friendly hybrid reranker, not a full
 sparse-vector/BM25 index.
 
+Issue retrieval queries are decomposed into detected security facets instead of
+running the same fixed queries for every change. Current facets include access
+control, authentication/session, business logic, file handling, sensitive
+data, audit logging, integrations/SSRF, injection, GraphQL, race/replay, mass
+assignment, rate limiting, and common misconfiguration signals. Endpoint and
+identifier names are carried into matching facet queries.
+
+Knowledge documents are chunked according to their format. Markdown heading
+paths are preserved, code blocks remain atomic, long tables repeat their header
+across row-aware chunks, and JSON chunks carry a key path. This prevents a
+control, table row, or structured object from being split by a generic
+word-only chunker.
+
+Context selection keeps complete chunks and enforces a per-source quota. It
+does not truncate a retrieved chunk in the middle of a sentence or control.
+
 Each risk hypothesis and test idea must include `supporting_evidence` using an
 allowed Jira, Confluence, or RAG source ID plus an exact `evidence_quote`.
 Unknown IDs and quotes not present in the cited source are removed; missing
 coverage is exposed through `citation_warnings`. Invalid model JSON is retried
 once with a schema-constrained repair prompt by default.
 
+Evidence is classified as a system fact, business requirement, security policy,
+security guidance, or past finding. Final risk confidence is recalculated in
+code from validated evidence; generic guidance alone cannot produce high
+confidence.
+
 The graph state is intentionally generic so later agents can append recon
 results, Burp MCP evidence, and validation outcomes without rewriting the Jira
 analysis layer.
+
+## Development Checks
+
+Run the same checks used by CI:
+
+```bash
+ruff check src tests
+mypy src/vulle
+pytest --cov=vulle --cov-report=term-missing
+bandit -q -r src/vulle
+pip-audit --requirement constraints.txt
+docker compose config
+```
+
+GitHub Actions runs these checks for pushes and pull requests and also scans
+the repository for committed secrets.
 
 ## Safety Notes
 

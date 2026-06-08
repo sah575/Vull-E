@@ -1,38 +1,43 @@
+from typing import Any
+
 from qdrant_client import QdrantClient
 from qdrant_client.http import models as qmodels
 
-from vulle.config import Settings
+from vulle.config import Settings, rag_scope
 from vulle.models import RagChunk
 
 
 class QdrantRagStore:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
+        self._scope = rag_scope(settings)
+        self._payload_indexes_ready = False
         self._client = QdrantClient(
             url=settings.qdrant_url,
             api_key=settings.qdrant_api_key,
             timeout=30,
         )
 
-    def ensure_collection(self) -> None:
+    def ensure_collection(self, *, ensure_payload_indexes: bool = False) -> None:
         collections = self._client.get_collections().collections
         exists = any(item.name == self._settings.qdrant_collection for item in collections)
-        if exists:
-            return
-        self._client.create_collection(
-            collection_name=self._settings.qdrant_collection,
-            vectors_config=qmodels.VectorParams(
-                size=self._settings.embedding_dimensions,
-                distance=qmodels.Distance.COSINE,
-            ),
-        )
+        if not exists:
+            self._client.create_collection(
+                collection_name=self._settings.qdrant_collection,
+                vectors_config=qmodels.VectorParams(
+                    size=self._settings.embedding_dimensions,
+                    distance=qmodels.Distance.COSINE,
+                ),
+            )
+        if ensure_payload_indexes:
+            self._ensure_payload_indexes()
 
     def upsert_chunks(self, chunks: list[RagChunk], vectors: list[list[float]]) -> None:
         if len(chunks) != len(vectors):
             raise ValueError("chunks and vectors must have the same length")
         if not chunks:
             return
-        self.ensure_collection()
+        self.ensure_collection(ensure_payload_indexes=True)
         points = [
             qmodels.PointStruct(
                 id=chunk.id,
@@ -42,13 +47,56 @@ class QdrantRagStore:
                     "title": chunk.title,
                     "text": chunk.text,
                     **chunk.metadata,
+                    **self._scope,
                 },
             )
-            for chunk, vector in zip(chunks, vectors)
+            for chunk, vector in zip(chunks, vectors, strict=True)
         ]
         self._client.upsert(
             collection_name=self._settings.qdrant_collection,
             points=points,
+        )
+
+    def replace_documents(
+        self,
+        chunks: list[RagChunk],
+        vectors: list[list[float]],
+        *,
+        document_ids: list[str] | None = None,
+    ) -> None:
+        document_ids = document_ids or sorted(
+            {
+                str(chunk.metadata["document_id"])
+                for chunk in chunks
+                if chunk.metadata.get("document_id")
+            }
+        )
+        if document_ids:
+            self.delete_documents(document_ids)
+        self.upsert_chunks(chunks, vectors)
+
+    def sync_index_root(
+        self,
+        index_root: str,
+        chunks: list[RagChunk],
+        vectors: list[list[float]],
+    ) -> None:
+        self.ensure_collection(ensure_payload_indexes=True)
+        self._client.delete(
+            collection_name=self._settings.qdrant_collection,
+            points_selector=self._filter(index_root=index_root),
+            wait=True,
+        )
+        self.upsert_chunks(chunks, vectors)
+
+    def delete_documents(self, document_ids: list[str]) -> None:
+        if not document_ids:
+            return
+        self.ensure_collection(ensure_payload_indexes=True)
+        self._client.delete(
+            collection_name=self._settings.qdrant_collection,
+            points_selector=self._filter(document_ids=document_ids),
+            wait=True,
         )
 
     def search(self, vector: list[float], limit: int) -> list[RagChunk]:
@@ -56,6 +104,7 @@ class QdrantRagStore:
         response = self._client.query_points(
             collection_name=self._settings.qdrant_collection,
             query=vector,
+            query_filter=self._filter(),
             limit=limit,
             with_payload=True,
         )
@@ -73,3 +122,50 @@ class QdrantRagStore:
                 )
             )
         return chunks
+
+    def _filter(
+        self,
+        *,
+        document_ids: list[str] | None = None,
+        index_root: str | None = None,
+    ) -> qmodels.Filter:
+        conditions: list[Any] = [
+            qmodels.FieldCondition(
+                key=key,
+                match=qmodels.MatchValue(value=value),
+            )
+            for key, value in self._scope.items()
+        ]
+        if document_ids:
+            conditions.append(
+                qmodels.FieldCondition(
+                    key="document_id",
+                    match=qmodels.MatchAny(any=document_ids),
+                )
+            )
+        if index_root:
+            conditions.append(
+                qmodels.FieldCondition(
+                    key="index_root",
+                    match=qmodels.MatchValue(value=index_root),
+                )
+            )
+        return qmodels.Filter(must=conditions)
+
+    def _ensure_payload_indexes(self) -> None:
+        if self._payload_indexes_ready:
+            return
+        for field_name in (
+            "tenant_id",
+            "environment",
+            "knowledge_base_id",
+            "document_id",
+            "index_root",
+        ):
+            self._client.create_payload_index(
+                collection_name=self._settings.qdrant_collection,
+                field_name=field_name,
+                field_schema=qmodels.PayloadSchemaType.KEYWORD,
+                wait=True,
+            )
+        self._payload_indexes_ready = True

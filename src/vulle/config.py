@@ -1,10 +1,10 @@
 import os
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
 
 PROFILE_ENV_VAR = "VULLE_PROFILE"
 DEFAULT_PROFILE_DIR = Path(".vulle/profiles")
@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     llm_temperature: float = Field(default=0.1, ge=0.0, le=2.0)
     llm_json_repair_attempts: int = Field(default=1, ge=0, le=3)
     llm_http_retries: int = Field(default=2, ge=0, le=5)
+    pii_redaction_mode: Literal["off", "mask"] = "off"
 
     embedding_base_url: str = "http://127.0.0.1:8000/v1"
     embedding_api_key: str = "local-not-needed"
@@ -36,8 +37,12 @@ class Settings(BaseSettings):
     qdrant_url: str = "http://127.0.0.1:6333"
     qdrant_api_key: str | None = None
     qdrant_collection: str = "vulle_knowledge"
+    rag_tenant_id: str | None = None
+    rag_environment: str = "preprod"
+    rag_knowledge_base_id: str | None = None
     rag_top_k: int = Field(default=6, gt=0)
     rag_max_context_chars: int = Field(default=8000, gt=1000)
+    rag_max_chunks_per_source: int = Field(default=3, gt=0)
     rag_candidate_multiplier: int = Field(default=4, ge=1, le=10)
     rag_dense_weight: float = Field(default=0.65, ge=0.0, le=1.0)
     rag_lexical_weight: float = Field(default=0.20, ge=0.0, le=1.0)
@@ -53,7 +58,7 @@ def get_settings(profile: str | None = None) -> Settings:
         env_files = (Path(".env"), profile_path)
     else:
         env_files = Path(".env")
-    return Settings(_env_file=env_files)
+    return Settings(_env_file=env_files)  # type: ignore[call-arg]
 
 
 def set_active_profile(profile: str | None) -> Path:
@@ -68,6 +73,19 @@ def active_profile_name() -> str:
     if not profile:
         return "default"
     return resolve_profile_path(profile).stem
+
+
+def rag_scope(settings: Settings) -> dict[str, str]:
+    tenant_id = settings.rag_tenant_id or active_profile_name()
+    knowledge_base_id = (
+        settings.rag_knowledge_base_id
+        or f"{tenant_id}:{settings.qdrant_collection}"
+    )
+    return {
+        "tenant_id": tenant_id,
+        "environment": settings.rag_environment,
+        "knowledge_base_id": knowledge_base_id,
+    }
 
 
 def resolve_profile_path(profile: str | None) -> Path:

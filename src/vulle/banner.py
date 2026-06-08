@@ -3,7 +3,6 @@ from rich.console import Console, Group
 from rich.panel import Panel
 from rich.text import Text
 
-
 BANNER = r"""V   V  U   U  L      L       EEEEE
 V   V  U   U  L      L       E
 V   V  U   U  L      L       EEEE

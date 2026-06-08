@@ -1,6 +1,10 @@
-from vulle.models import JiraIssue
-from vulle.rag.service import build_issue_queries, rerank_chunks, trim_context
-from vulle.models import RagChunk
+from vulle.models import JiraIssue, RagChunk
+from vulle.rag.service import (
+    build_issue_queries,
+    extract_security_facets,
+    rerank_chunks,
+    trim_context,
+)
 
 
 def test_build_issue_queries_extracts_security_facets() -> None:
@@ -23,6 +27,18 @@ def test_build_issue_queries_extracts_security_facets() -> None:
     assert "audit" in joined.lower()
 
 
+def test_security_facets_only_include_detected_areas() -> None:
+    facets = extract_security_facets(
+        "POST /documents/{documentId}/approve lets checker upload a PDF "
+        "and requires audit logging"
+    )
+    facet_types = {facet.type for facet in facets}
+
+    assert {"authorization", "business_logic", "file_handling", "audit_logging"} <= facet_types
+    assert "ssrf_integration" not in facet_types
+    assert any("documentId" in facet.terms for facet in facets)
+
+
 def test_trim_context_keeps_context_under_limit() -> None:
     chunks = [
         RagChunk(id="1", source="a", title="A", text="a" * 600),
@@ -33,6 +49,31 @@ def test_trim_context_keeps_context_under_limit() -> None:
 
     assert len(selected) == 1
     assert selected[0].source == "a"
+    assert len(selected[0].text) == 600
+
+
+def test_trim_context_skips_oversized_chunk_without_cutting() -> None:
+    chunks = [
+        RagChunk(id="1", source="a", title="A", text="a" * 900),
+        RagChunk(id="2", source="b", title="B", text="complete"),
+    ]
+
+    selected = trim_context(chunks, 800)
+
+    assert [chunk.id for chunk in selected] == ["2"]
+    assert selected[0].text == "complete"
+
+
+def test_trim_context_limits_chunks_per_source() -> None:
+    chunks = [
+        RagChunk(id="1", source="a", title="A", text="one"),
+        RagChunk(id="2", source="a", title="A", text="two"),
+        RagChunk(id="3", source="b", title="B", text="three"),
+    ]
+
+    selected = trim_context(chunks, 100, max_chunks_per_source=1)
+
+    assert [chunk.id for chunk in selected] == ["1", "3"]
 
 
 def test_rerank_chunks_uses_lexical_match_and_source_priority() -> None:

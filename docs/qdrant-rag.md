@@ -39,6 +39,12 @@ analyze_issue prompt
 Qdrant stores only document chunks and metadata. Jira and Confluence content is
 used as the retrieval query and is not automatically written to Qdrant.
 Common credential patterns are redacted before query embedding.
+Optional PII masking is controlled by `PII_REDACTION_MODE=off|mask`. Secret
+redaction is mandatory and remains enabled in both modes.
+
+Every point includes `tenant_id`, `environment`, and `knowledge_base_id`.
+Search, replacement, and sync deletion require all three values as server-side
+Qdrant filters.
 
 The embedding service must expose an OpenAI-compatible `/embeddings` endpoint.
 The chat model must expose an OpenAI-compatible `/chat/completions` endpoint.
@@ -47,7 +53,7 @@ For local development:
 
 ```bash
 docker compose up -d qdrant
-vulle rag-index docs/knowledge
+vulle rag-index docs/knowledge --sync
 vulle rag-search "maker checker approval"
 vulle rag-eval tests/rag_eval_cases.json
 ```
@@ -74,7 +80,19 @@ Vull-E exposes RAG health in the analysis JSON through `rag_status`, `rag_error`
 and `rag_sources`. Retrieval failures should be visible to reviewers and should
 not be silently treated as a complete analysis.
 
-Chunk metadata includes `source_type`, `source_priority`, `is_template`, and
-`control_areas`. Reindex existing collections after metadata or chunking
-changes. Template files are intentionally low priority because an unfilled
-template is not an internal control or business rule.
+Chunk metadata includes `source_type`, `source_priority`, `is_template`,
+`control_areas`, stable `document_id`, `content_hash`, and `index_root` values.
+Normal indexing replaces current documents; `--sync` rebuilds the scoped index
+root and removes deleted documents. Template files are intentionally low
+priority because an unfilled template is not an internal control or business
+rule.
+
+Markdown chunks preserve heading paths and keep code blocks intact. Long tables
+are split by row with their header repeated. JSON documents are split by key
+path and retain `json_path` metadata. Retrieval queries are generated only for
+security facets detected in the Jira and Confluence text, while endpoint and
+identifier terms are propagated into those facet queries.
+
+Points created before tenant scoping are not matched by scoped filters. Migrate
+once by using a new collection or recreating the existing collection, then run
+`rag-index --sync`.

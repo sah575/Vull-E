@@ -7,7 +7,6 @@ from pydantic import BaseModel, ValidationError
 
 from vulle.config import Settings
 
-
 T = TypeVar("T", bound=BaseModel)
 
 
@@ -59,7 +58,10 @@ class LLMClient:
             },
         )
         response.raise_for_status()
-        return response.json()["choices"][0]["message"]["content"]
+        content = response.json()["choices"][0]["message"]["content"]
+        if not isinstance(content, str):
+            raise ValueError("LLM response content must be a string")
+        return content
 
     @staticmethod
     def _repair_prompt(content: str, schema: type[T], error: Exception) -> str:

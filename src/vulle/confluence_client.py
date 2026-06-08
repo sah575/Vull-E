@@ -11,7 +11,9 @@ from vulle.models import ConfluencePage, JiraIssue
 
 class ConfluenceClient:
     def __init__(self, settings: Settings) -> None:
-        base_url = settings.confluence_base_url or _derive_confluence_base_url(settings.jira_base_url)
+        base_url = settings.confluence_base_url or _derive_confluence_base_url(
+            settings.jira_base_url
+        )
         email = settings.confluence_email or settings.jira_email
         token = settings.confluence_api_token or settings.jira_api_token
 
@@ -69,7 +71,10 @@ class ConfluenceClient:
                 params={"expand": "body.storage,body.view,space,_links"},
             )
         response.raise_for_status()
-        return response.json()
+        payload = response.json()
+        if not isinstance(payload, dict):
+            raise ValueError("Confluence response must be a JSON object")
+        return payload
 
     def _page_url(self, payload: dict[str, Any]) -> str | None:
         links = payload.get("_links") or {}
@@ -88,7 +93,11 @@ def extract_confluence_urls(issue: JiraIssue) -> list[str]:
     ]
     text = "\n".join(text_parts)
     candidates = re.findall(r"https?://[^\s<>\]\)\"']+", text)
-    return [url.rstrip(".,;") for url in candidates if "confluence" in url.lower() or "/wiki/" in url]
+    return [
+        url.rstrip(".,;")
+        for url in candidates
+        if "confluence" in url.lower() or "/wiki/" in url
+    ]
 
 
 def extract_page_id(url: str) -> str | None:

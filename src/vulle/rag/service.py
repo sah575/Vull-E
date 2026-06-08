@@ -3,14 +3,74 @@ import re
 from pathlib import Path
 
 from vulle.config import Settings
-from vulle.models import ConfluencePage, JiraIssue, RagChunk
-from vulle.rag.documents import load_documents
+from vulle.models import ConfluencePage, JiraIssue, RagChunk, SecurityFacet
+from vulle.rag.documents import document_ids_for_path, load_documents, normalized_path
 from vulle.rag.embeddings import EmbeddingClient
 from vulle.rag.qdrant_store import QdrantRagStore
-from vulle.security import redact_text
-
+from vulle.security import PiiRedactionMode, redact_text
 
 TOKEN_PATTERN = re.compile(r"[a-zA-Z0-9_./{}:-]+")
+ENDPOINT_PATTERN = re.compile(
+    r"\b(?:GET|POST|PUT|PATCH|DELETE)\s+/[^\s,\"')]+",
+    re.I,
+)
+IDENTIFIER_PATTERN = re.compile(r"\b[a-zA-Z][a-zA-Z0-9_]*(?:Id|ID)\b")
+FACET_TERMS = {
+    "authorization": {
+        "authorization", "permission", "role", "yetki", "maker", "checker",
+        "approver", "branch", "tenant", "ownership", "impersonation", "admin",
+        "idor", "bola", "bfla",
+    },
+    "authentication_session": {
+        "authentication", "login", "logout", "session", "cookie", "token",
+        "jwt", "oauth", "password", "mfa", "otp", "refresh token", "device",
+    },
+    "business_logic": {
+        "workflow", "approve", "reject", "submit", "cancel", "reverse", "refund",
+        "limit", "payment", "transfer", "replay", "duplicate", "idempotency",
+        "maker checker", "state transition",
+    },
+    "file_handling": {
+        "upload", "download", "file", "document", "pdf", "excel", "csv", "xml",
+        "archive", "zip", "mime", "preview", "parser", "deserialize", "dosya",
+    },
+    "sensitive_data": {
+        "pii", "kvkk", "gdpr", "mask", "iban", "card", "pan", "cvv", "email",
+        "phone", "address", "nationalid", "customer data", "export",
+    },
+    "audit_logging": {
+        "audit", "logging", "log", "correlationid", "actor", "timestamp",
+        "denied attempt", "security event",
+    },
+    "ssrf_integration": {
+        "ssrf", "webhook", "callback", "url", "integration", "third party",
+        "metadata service", "private ip", "allowlist", "signature",
+    },
+    "injection": {
+        "injection", "sql", "command", "template", "xss", "ldap", "xpath",
+        "formula", "query", "filter expression",
+    },
+    "graphql_api": {
+        "graphql", "mutation", "resolver", "schema", "introspection",
+        "nested field", "field-level",
+    },
+    "race_replay": {
+        "race", "concurrent", "parallel", "replay", "duplicate submission",
+        "idempotency", "double spend",
+    },
+    "mass_assignment": {
+        "mass assignment", "object property", "bind", "dto", "hidden field",
+        "isadmin", "roleid", "status field",
+    },
+    "rate_limit_resource": {
+        "rate limit", "throttle", "brute force", "resource exhaustion",
+        "large payload", "pagination", "bulk", "otp abuse",
+    },
+    "misconfiguration": {
+        "cors", "csrf", "debug", "swagger", "openapi", "actuator", "error",
+        "stack trace", "security header", "cache",
+    },
+}
 
 
 class RagService:
@@ -19,10 +79,17 @@ class RagService:
         self._embeddings = EmbeddingClient(settings)
         self._store = QdrantRagStore(settings)
 
-    def index_path(self, path: Path) -> int:
-        chunks = load_documents(path)
+    def index_path(self, path: Path, *, sync: bool = False) -> int:
+        chunks = load_documents(path, pii_mode=self._settings.pii_redaction_mode)
         vectors = self._embeddings.embed_texts([chunk.text for chunk in chunks])
-        self._store.upsert_chunks(chunks, vectors)
+        if sync:
+            self._store.sync_index_root(normalized_path(path), chunks, vectors)
+        else:
+            self._store.replace_documents(
+                chunks,
+                vectors,
+                document_ids=document_ids_for_path(path),
+            )
         return len(chunks)
 
     def search(self, query: str, limit: int | None = None) -> list[RagChunk]:
@@ -45,7 +112,11 @@ class RagService:
         issue: JiraIssue,
         confluence_pages: list[ConfluencePage],
     ) -> list[RagChunk]:
-        queries = build_issue_queries(issue, confluence_pages)
+        queries = build_issue_queries(
+            issue,
+            confluence_pages,
+            pii_mode=self._settings.pii_redaction_mode,
+        )
         candidates: dict[str, RagChunk] = {}
         per_query_limit = max(self._settings.rag_top_k, 4)
         for query in queries:
@@ -54,21 +125,24 @@ class RagService:
                 if current is None or _score(chunk) > _score(current):
                     candidates[chunk.id] = chunk
         chunks = sorted(candidates.values(), key=_score, reverse=True)
-        return trim_context(chunks, self._settings.rag_max_context_chars)
+        return trim_context(
+            chunks,
+            self._settings.rag_max_context_chars,
+            max_chunks_per_source=self._settings.rag_max_chunks_per_source,
+        )
 
 
 def build_issue_query(issue: JiraIssue, confluence_pages: list[ConfluencePage]) -> str:
     return build_issue_queries(issue, confluence_pages)[0]
 
 
-def build_issue_queries(issue: JiraIssue, confluence_pages: list[ConfluencePage]) -> list[str]:
-    text = _issue_text(issue, confluence_pages)
-    endpoints = sorted(set(re.findall(r"\b(?:GET|POST|PUT|PATCH|DELETE)\s+/[^\s,\"')]+", text, re.I)))
-    object_ids = sorted(set(re.findall(r"\b[a-zA-Z]*(?:customer|account|document|transaction|branch|user|case|card)[a-zA-Z]*Id\b", text, re.I)))
-    roles = sorted(set(re.findall(r"\b(?:maker|checker|approver|reviewer|admin|branch|region|operator|viewer)\b", text, re.I)))
-    actions = sorted(set(re.findall(r"\b(?:approve|reject|submit|cancel|upload|download|export|import|activate|reverse|refund|delete|update)\b", text, re.I)))
-    data_terms = sorted(set(re.findall(r"\b(?:PII|KVKK|GDPR|mask(?:ed|ing)?|audit|log(?:ging)?|card|IBAN|phone|email|address|nationalId)\b", text, re.I)))
-
+def build_issue_queries(
+    issue: JiraIssue,
+    confluence_pages: list[ConfluencePage],
+    *,
+    pii_mode: PiiRedactionMode = "off",
+) -> list[str]:
+    text = _issue_text(issue, confluence_pages, pii_mode=pii_mode)
     payload = {
         "summary": issue.summary,
         "description": issue.description,
@@ -79,31 +153,75 @@ def build_issue_queries(issue: JiraIssue, confluence_pages: list[ConfluencePage]
         "confluence_titles": [page.title for page in confluence_pages],
         "confluence_excerpt": [page.body_text[:1200] for page in confluence_pages],
     }
-    queries = [
-        json.dumps(payload, ensure_ascii=False),
-        "endpoint object authorization IDOR BOLA " + " ".join([*endpoints, *object_ids]),
-        "role scope access control maker checker branch authorization " + " ".join(roles),
-        "state changing workflow business logic audit approval " + " ".join(actions),
-        "data classification masking sensitive data logging " + " ".join(data_terms),
-    ]
+    facets = extract_security_facets(text)
+    queries = [json.dumps(payload, ensure_ascii=False)]
+    queries.extend(
+        f"security facet {facet.type}: {' '.join(facet.terms)}"
+        for facet in facets
+    )
     return [query for query in queries if query.strip()]
 
 
-def trim_context(chunks: list[RagChunk], max_chars: int) -> list[RagChunk]:
+def extract_security_facets(text: str) -> list[SecurityFacet]:
+    lowered = text.lower()
+    shared_terms = sorted(
+        {
+            *ENDPOINT_PATTERN.findall(text),
+            *IDENTIFIER_PATTERN.findall(text),
+        },
+        key=str.lower,
+    )
+    facets: list[SecurityFacet] = []
+    for facet_type, vocabulary in FACET_TERMS.items():
+        matched = sorted(
+            {
+                term
+                for term in vocabulary
+                if re.search(
+                    rf"(?<!\w){re.escape(term)}(?!\w)",
+                    lowered,
+                    re.IGNORECASE,
+                )
+            }
+        )
+        if matched:
+            facets.append(
+                SecurityFacet(
+                    type=facet_type,
+                    terms=[*matched, *shared_terms],
+                )
+            )
+    if shared_terms and not facets:
+        facets.append(SecurityFacet(type="api_surface", terms=shared_terms))
+    return facets
+
+
+def trim_context(
+    chunks: list[RagChunk],
+    max_chars: int,
+    *,
+    max_chunks_per_source: int = 3,
+) -> list[RagChunk]:
     selected: list[RagChunk] = []
     total = 0
+    source_counts: dict[str, int] = {}
     for chunk in chunks:
+        if source_counts.get(chunk.source, 0) >= max_chunks_per_source:
+            continue
         if total + len(chunk.text) > max_chars:
-            remaining = max_chars - total
-            if remaining > 500:
-                selected.append(chunk.model_copy(update={"text": chunk.text[:remaining]}))
-            break
+            continue
         selected.append(chunk)
         total += len(chunk.text)
+        source_counts[chunk.source] = source_counts.get(chunk.source, 0) + 1
     return selected
 
 
-def _issue_text(issue: JiraIssue, confluence_pages: list[ConfluencePage]) -> str:
+def _issue_text(
+    issue: JiraIssue,
+    confluence_pages: list[ConfluencePage],
+    *,
+    pii_mode: PiiRedactionMode = "off",
+) -> str:
     parts = [
         issue.summary,
         issue.description or "",
@@ -114,7 +232,7 @@ def _issue_text(issue: JiraIssue, confluence_pages: list[ConfluencePage]) -> str
         " ".join(page.title for page in confluence_pages),
         " ".join(page.body_text[:2000] for page in confluence_pages),
     ]
-    return redact_text("\n".join(parts)) or ""
+    return redact_text("\n".join(parts), pii_mode=pii_mode) or ""
 
 
 def _score(chunk: RagChunk) -> float:

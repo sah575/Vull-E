@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from vulle.config import get_settings, resolve_profile_path
+from vulle.config import get_settings, rag_scope, resolve_profile_path
 
 
 def test_named_profile_overrides_shared_env(
@@ -35,3 +35,21 @@ def test_named_profile_overrides_shared_env(
 
 def test_explicit_profile_path_is_supported() -> None:
     assert resolve_profile_path("configs/target.env") == Path("configs/target.env")
+
+
+def test_explicit_rag_scope_overrides_profile_defaults() -> None:
+    scope = rag_scope(
+        get_settings().model_copy(
+            update={
+                "rag_tenant_id": "bank-a",
+                "rag_environment": "staging",
+                "rag_knowledge_base_id": "bank-a-security-v3",
+            }
+        )
+    )
+
+    assert scope == {
+        "tenant_id": "bank-a",
+        "environment": "staging",
+        "knowledge_base_id": "bank-a-security-v3",
+    }

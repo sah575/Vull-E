@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from typing import Any
 
 import httpx
 import typer
@@ -7,14 +8,13 @@ from rich.console import Console
 
 from vulle.agents.jira_analysis import analyze_jira_issue
 from vulle.banner import render_banner
+from vulle.config import Settings, get_settings, set_active_profile
 from vulle.confluence_client import ConfluenceClient, extract_confluence_urls
-from vulle.config import get_settings, set_active_profile
-from vulle.jira_client import JiraClient, jira_payload_to_issue
-from vulle.models import JiraIssue
 from vulle.doctor import run_doctor
+from vulle.jira_client import JiraClient, jira_payload_to_issue
+from vulle.models import ConfluencePage, JiraIssue
 from vulle.rag.evaluation import aggregate_results, evaluate_case
 from vulle.rag.service import RagService
-
 
 app = typer.Typer(help="Vull-E security analysis CLI")
 console = Console()
@@ -63,10 +63,16 @@ def analyze_file(path: Path, output: Path | None = None) -> None:
 
 
 @app.command("rag-index")
-def rag_index(path: Path) -> None:
+def rag_index(
+    path: Path,
+    sync: bool = typer.Option(
+        False,
+        help="Replace the complete index root and remove stale/deleted documents.",
+    ),
+) -> None:
     """Index markdown, text, or JSON knowledge documents into Qdrant."""
     settings = get_settings()
-    count = RagService(settings).index_path(path)
+    count = RagService(settings).index_path(path, sync=sync)
     console.print(f"[green]Indexed {count} chunk(s) into {settings.qdrant_collection}.[/green]")
 
 
@@ -120,20 +126,26 @@ def doctor(
         raise typer.Exit(code=1)
 
 
-def _issue_from_file_payload(payload: dict) -> JiraIssue:
+def _issue_from_file_payload(payload: dict[str, Any]) -> JiraIssue:
     if "fields" in payload:
         return jira_payload_to_issue(payload)
     return JiraIssue.model_validate(payload)
 
 
-def _load_confluence_pages(issue: JiraIssue, settings) -> list:
+def _load_confluence_pages(
+    issue: JiraIssue,
+    settings: Settings,
+) -> list[ConfluencePage]:
     urls = extract_confluence_urls(issue)
     if not urls:
         return []
     try:
         pages = ConfluenceClient(settings).get_pages_from_issue(issue)
     except ValueError:
-        console.print("[yellow]Confluence link found, but Confluence credentials are not configured.[/yellow]")
+        console.print(
+            "[yellow]Confluence link found, but Confluence credentials "
+            "are not configured.[/yellow]"
+        )
         return []
     except httpx.HTTPError as exc:
         console.print(f"[yellow]Confluence pages could not be loaded: {exc}[/yellow]")
@@ -143,7 +155,7 @@ def _load_confluence_pages(issue: JiraIssue, settings) -> list:
     return pages
 
 
-def _emit_json(payload, output: Path | None = None) -> None:
+def _emit_json(payload: Any, output: Path | None = None) -> None:
     rendered = json.dumps(payload, ensure_ascii=False, indent=2)
     if output is None:
         console.print_json(rendered)

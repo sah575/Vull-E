@@ -41,9 +41,25 @@ class RagSource(BaseModel):
     chunk_id: str | None = None
 
 
+class SecurityFacet(BaseModel):
+    type: str
+    terms: list[str] = Field(default_factory=list)
+
+
+EvidenceType = Literal[
+    "system_fact",
+    "business_requirement",
+    "security_policy",
+    "security_guidance",
+    "past_finding",
+    "assumption",
+]
+
+
 class EvidenceReference(BaseModel):
     source_id: str
     evidence_quote: str
+    evidence_type: EvidenceType
     relevance: str
 
 
@@ -54,6 +70,9 @@ class AnalysisMetadata(BaseModel):
     llm_model: str
     embedding_model: str
     qdrant_collection: str
+    tenant_id: str
+    environment: str
+    knowledge_base_id: str
 
 
 class RiskHypothesis(BaseModel):

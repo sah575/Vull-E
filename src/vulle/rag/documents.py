@@ -1,10 +1,13 @@
 import hashlib
+import json
+import re
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
 from vulle.models import RagChunk
-from vulle.security import redact_text
-
+from vulle.security import PiiRedactionMode, redact_text
 
 SUPPORTED_EXTENSIONS = {".md", ".txt", ".json"}
 CONTROL_AREA_TERMS = {
@@ -16,30 +19,65 @@ CONTROL_AREA_TERMS = {
     "injection": {"injection", "sql", "command", "xss", "template"},
     "integration_security": {"ssrf", "webhook", "callback", "integration", "third-party"},
 }
+HEADING_PATTERN = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
+TABLE_SEPARATOR_PATTERN = re.compile(
+    r"^\s*\|?(?:\s*:?-{3,}:?\s*\|)+\s*:?-{3,}:?\s*\|?\s*$"
+)
 
 
-def load_documents(path: Path) -> list[RagChunk]:
+@dataclass
+class DocumentPart:
+    title: str
+    text: str
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+def load_documents(
+    path: Path,
+    *,
+    pii_mode: PiiRedactionMode = "off",
+) -> list[RagChunk]:
     files = _iter_supported_files(path)
+    index_root = normalized_path(path)
     chunks: list[RagChunk] = []
     for file_path in files:
-        text = redact_text(file_path.read_text(encoding="utf-8")) or ""
+        text = (
+            redact_text(
+                file_path.read_text(encoding="utf-8"),
+                pii_mode=pii_mode,
+            )
+            or ""
+        )
+        source = normalized_path(file_path)
+        document_id = stable_document_id(source)
+        content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
         title = _title_for(file_path, text)
-        sections = chunk_markdown_sections(text) if file_path.suffix.lower() == ".md" else [("", text)]
+        parts = _document_parts(file_path, text)
         chunk_index = 0
-        for section_title, section_text in sections:
-            for chunk_text in chunk_text_by_words(section_text):
-                chunk_id = stable_chunk_id(str(file_path), chunk_index, chunk_text)
+        for part in parts:
+            atomic = part.metadata.get("chunk_type") in {
+                "json",
+                "markdown_code",
+                "markdown_table",
+            }
+            part_chunks = [part.text] if atomic else chunk_text_by_words(part.text)
+            for chunk_text in part_chunks:
+                chunk_id = stable_chunk_id(source, chunk_index, chunk_text)
                 chunks.append(
                     RagChunk(
                         id=chunk_id,
-                        source=str(file_path),
-                        title=section_title or title,
+                        source=source,
+                        title=part.title or title,
                         text=chunk_text,
                         metadata={
-                            "source": str(file_path),
+                            "source": source,
                             "title": title,
-                            "section": section_title,
+                            "section": part.title,
+                            **part.metadata,
                             "chunk_index": chunk_index,
+                            "document_id": document_id,
+                            "content_hash": content_hash,
+                            "index_root": index_root,
                             "source_type": _source_type(file_path),
                             "source_priority": _source_priority(file_path),
                             "is_template": ".template." in file_path.name,
@@ -52,34 +90,190 @@ def load_documents(path: Path) -> list[RagChunk]:
 
 
 def chunk_markdown_sections(text: str, max_section_words: int = 700) -> list[tuple[str, str]]:
+    return [
+        (part.title, part.text)
+        for part in _chunk_markdown_parts(text, max_section_words=max_section_words)
+    ]
+
+
+def _chunk_markdown_parts(
+    text: str,
+    *,
+    max_section_words: int = 700,
+) -> list[DocumentPart]:
     sections: list[tuple[str, list[str]]] = []
-    current_title = ""
+    heading_stack: list[str] = []
+    current_path: list[str] = []
     current_lines: list[str] = []
 
     for line in text.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("#"):
+        match = HEADING_PATTERN.match(line.strip())
+        if match:
             if current_lines:
-                sections.append((current_title, current_lines))
-            current_title = stripped.lstrip("#").strip()
+                sections.append((" > ".join(current_path), current_lines))
+            level = len(match.group(1))
+            heading_stack = heading_stack[: level - 1]
+            heading_stack.append(match.group(2).strip())
+            current_path = list(heading_stack)
             current_lines = [line]
         else:
             current_lines.append(line)
     if current_lines:
-        sections.append((current_title, current_lines))
+        sections.append((" > ".join(current_path), current_lines))
 
-    result: list[tuple[str, str]] = []
+    result: list[DocumentPart] = []
     for section_title, lines in sections:
         section_text = "\n".join(lines).strip()
         if not section_text:
             continue
         if len(section_text.split()) <= max_section_words:
-            result.append((section_title, section_text))
+            result.append(
+                DocumentPart(
+                    title=section_title,
+                    text=section_text,
+                    metadata={
+                        "chunk_type": "markdown_section",
+                        "section_path": section_title.split(" > ") if section_title else [],
+                    },
+                )
+            )
             continue
-        for index, chunk in enumerate(chunk_text_by_words(section_text, chunk_words=max_section_words, overlap_words=80)):
-            suffix = f" part {index + 1}" if section_title else ""
-            result.append((f"{section_title}{suffix}".strip(), chunk))
+        blocks = _markdown_blocks(section_text)
+        for index, (block_type, block_text) in enumerate(blocks):
+            chunks = (
+                _chunk_table(block_text, max_section_words)
+                if block_type == "table"
+                else [block_text]
+                if block_type == "code"
+                else chunk_text_by_words(
+                    block_text,
+                    chunk_words=max_section_words,
+                    overlap_words=80,
+                )
+            )
+            for part_index, chunk in enumerate(chunks):
+                suffix = f" part {index + 1}.{part_index + 1}"
+                result.append(
+                    DocumentPart(
+                        title=f"{section_title}{suffix}".strip(),
+                        text=chunk,
+                        metadata={
+                            "chunk_type": f"markdown_{block_type}",
+                            "section_path": (
+                                section_title.split(" > ") if section_title else []
+                            ),
+                        },
+                    )
+                )
     return result
+
+
+def _document_parts(path: Path, text: str) -> list[DocumentPart]:
+    suffix = path.suffix.lower()
+    if suffix == ".md":
+        return _chunk_markdown_parts(text)
+    if suffix == ".json":
+        return _chunk_json_parts(text)
+    return [DocumentPart(title="", text=text, metadata={"chunk_type": "text"})]
+
+
+def _chunk_json_parts(text: str, max_words: int = 350) -> list[DocumentPart]:
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return [DocumentPart(title="", text=text, metadata={"chunk_type": "json_invalid"})]
+
+    parts: list[DocumentPart] = []
+
+    def visit(value: Any, path: list[str]) -> None:
+        serialized = json.dumps(value, ensure_ascii=False, indent=2)
+        if len(serialized.split()) <= max_words or not isinstance(value, (dict, list)):
+            title = " > ".join(path) or "JSON document"
+            parts.append(
+                DocumentPart(
+                    title=title,
+                    text=serialized,
+                    metadata={
+                        "chunk_type": "json",
+                        "json_path": path,
+                        "section_path": path,
+                    },
+                )
+            )
+            return
+        items = value.items() if isinstance(value, dict) else enumerate(value)
+        for key, child in items:
+            visit(child, [*path, str(key)])
+
+    visit(payload, [])
+    return parts
+
+
+def _markdown_blocks(text: str) -> list[tuple[str, str]]:
+    lines = text.splitlines()
+    blocks: list[tuple[str, str]] = []
+    prose: list[str] = []
+    index = 0
+
+    def flush_prose() -> None:
+        if prose:
+            value = "\n".join(prose).strip()
+            if value:
+                blocks.append(("prose", value))
+            prose.clear()
+
+    while index < len(lines):
+        line = lines[index]
+        if line.strip().startswith("```"):
+            flush_prose()
+            code = [line]
+            index += 1
+            while index < len(lines):
+                code.append(lines[index])
+                if lines[index].strip().startswith("```"):
+                    index += 1
+                    break
+                index += 1
+            blocks.append(("code", "\n".join(code)))
+            continue
+        if (
+            "|" in line
+            and index + 1 < len(lines)
+            and TABLE_SEPARATOR_PATTERN.match(lines[index + 1])
+        ):
+            flush_prose()
+            table = [line, lines[index + 1]]
+            index += 2
+            while index < len(lines) and "|" in lines[index] and lines[index].strip():
+                table.append(lines[index])
+                index += 1
+            blocks.append(("table", "\n".join(table)))
+            continue
+        prose.append(line)
+        index += 1
+    flush_prose()
+    return blocks
+
+
+def _chunk_table(text: str, max_words: int) -> list[str]:
+    if len(text.split()) <= max_words:
+        return [text]
+    lines = text.splitlines()
+    if len(lines) < 3:
+        return chunk_text_by_words(text, chunk_words=max_words, overlap_words=0)
+    header = lines[:2]
+    chunks: list[str] = []
+    current = list(header)
+    for row in lines[2:]:
+        candidate = "\n".join([*current, row])
+        if len(candidate.split()) > max_words and len(current) > 2:
+            chunks.append("\n".join(current))
+            current = [*header, row]
+        else:
+            current.append(row)
+    if len(current) > 2:
+        chunks.append("\n".join(current))
+    return chunks
 
 
 def chunk_text_by_words(text: str, chunk_words: int = 350, overlap_words: int = 60) -> list[str]:
@@ -98,8 +292,19 @@ def chunk_text_by_words(text: str, chunk_words: int = 350, overlap_words: int = 
 
 
 def stable_chunk_id(source: str, index: int, text: str) -> str:
-    digest = hashlib.sha256(f"{source}:{index}:{text}".encode("utf-8")).hexdigest()
+    digest = hashlib.sha256(f"{source}:{index}:{text}".encode()).hexdigest()
     return str(uuid5(NAMESPACE_URL, digest))
+
+
+def stable_document_id(source: str) -> str:
+    return str(uuid5(NAMESPACE_URL, f"vulle-document:{source}"))
+
+
+def document_ids_for_path(path: Path) -> list[str]:
+    return [
+        stable_document_id(normalized_path(file_path))
+        for file_path in _iter_supported_files(path)
+    ]
 
 
 def _iter_supported_files(path: Path) -> list[Path]:
@@ -110,6 +315,13 @@ def _iter_supported_files(path: Path) -> list[Path]:
         for item in path.rglob("*")
         if item.is_file() and item.suffix.lower() in SUPPORTED_EXTENSIONS
     )
+
+
+def normalized_path(path: Path) -> str:
+    try:
+        return path.resolve().relative_to(Path.cwd().resolve()).as_posix()
+    except ValueError:
+        return path.resolve().as_posix()
 
 
 def _title_for(path: Path, text: str) -> str:
