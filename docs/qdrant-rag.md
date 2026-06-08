@@ -30,11 +30,15 @@ retrieve_context
 embedding query -> Qdrant search -> relevant chunks
     |
     v
+dense + lexical + source-priority reranking
+    |
+    v
 analyze_issue prompt
 ```
 
 Qdrant stores only document chunks and metadata. Jira and Confluence content is
 used as the retrieval query and is not automatically written to Qdrant.
+Common credential patterns are redacted before query embedding.
 
 The embedding service must expose an OpenAI-compatible `/embeddings` endpoint.
 The chat model must expose an OpenAI-compatible `/chat/completions` endpoint.
@@ -69,3 +73,8 @@ needed before reporting a validated finding.
 Vull-E exposes RAG health in the analysis JSON through `rag_status`, `rag_error`,
 and `rag_sources`. Retrieval failures should be visible to reviewers and should
 not be silently treated as a complete analysis.
+
+Chunk metadata includes `source_type`, `source_priority`, `is_template`, and
+`control_areas`. Reindex existing collections after metadata or chunking
+changes. Template files are intentionally low priority because an unfilled
+template is not an internal control or business rule.

@@ -2,6 +2,10 @@
 __pycache__/
 *.pyc
 .env
+.env.*
+*.env
+!.env.example
+!.env.production.example
 .DS_Store
 .pytest_cache/
 .mypy_cache/
@@ -10,3 +14,7 @@ build/
 *.egg-info/
 .codex
 .vulle/
+reports/
+report.json
+rag-eval.json
+docs/knowledge/internal/private/

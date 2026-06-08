@@ -1,5 +1,5 @@
 from vulle.models import JiraIssue
-from vulle.rag.service import build_issue_queries, trim_context
+from vulle.rag.service import build_issue_queries, rerank_chunks, trim_context
 from vulle.models import RagChunk
 
 
@@ -33,3 +33,36 @@ def test_trim_context_keeps_context_under_limit() -> None:
 
     assert len(selected) == 1
     assert selected[0].source == "a"
+
+
+def test_rerank_chunks_uses_lexical_match_and_source_priority() -> None:
+    chunks = [
+        RagChunk(
+            id="generic",
+            source="owasp/generic.md",
+            title="Generic",
+            text="general security guidance",
+            score=0.90,
+            metadata={"source_type": "owasp", "source_priority": 0.60},
+        ),
+        RagChunk(
+            id="internal",
+            source="internal/role-matrix.md",
+            title="Maker checker roles",
+            text="maker checker branch approval",
+            score=0.75,
+            metadata={"source_type": "internal", "source_priority": 1.0},
+        ),
+    ]
+
+    ranked = rerank_chunks(
+        "maker checker branch approval",
+        chunks,
+        2,
+        dense_weight=0.40,
+        lexical_weight=0.35,
+        source_weight=0.25,
+    )
+
+    assert ranked[0].id == "internal"
+    assert ranked[0].metadata["retrieval"]["lexical_score"] == 1.0

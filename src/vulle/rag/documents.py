@@ -3,16 +3,26 @@ from pathlib import Path
 from uuid import NAMESPACE_URL, uuid5
 
 from vulle.models import RagChunk
+from vulle.security import redact_text
 
 
 SUPPORTED_EXTENSIONS = {".md", ".txt", ".json"}
+CONTROL_AREA_TERMS = {
+    "access_control": {"authorization", "idor", "bola", "role", "permission", "maker", "checker"},
+    "authentication": {"authentication", "login", "session", "token", "mfa", "otp", "password"},
+    "business_logic": {"workflow", "approve", "reject", "limit", "payment", "transfer", "race"},
+    "data_protection": {"pii", "kvkk", "gdpr", "masking", "sensitive", "iban", "logging"},
+    "file_handling": {"upload", "download", "file", "document", "mime", "deserialization"},
+    "injection": {"injection", "sql", "command", "xss", "template"},
+    "integration_security": {"ssrf", "webhook", "callback", "integration", "third-party"},
+}
 
 
 def load_documents(path: Path) -> list[RagChunk]:
     files = _iter_supported_files(path)
     chunks: list[RagChunk] = []
     for file_path in files:
-        text = file_path.read_text(encoding="utf-8")
+        text = redact_text(file_path.read_text(encoding="utf-8")) or ""
         title = _title_for(file_path, text)
         sections = chunk_markdown_sections(text) if file_path.suffix.lower() == ".md" else [("", text)]
         chunk_index = 0
@@ -31,6 +41,9 @@ def load_documents(path: Path) -> list[RagChunk]:
                             "section": section_title,
                             "chunk_index": chunk_index,
                             "source_type": _source_type(file_path),
+                            "source_priority": _source_priority(file_path),
+                            "is_template": ".template." in file_path.name,
+                            "control_areas": _control_areas(chunk_text),
                         },
                     )
                 )
@@ -120,3 +133,25 @@ def _source_type(path: Path) -> str:
     if "owasp" in parts:
         return "owasp"
     return "local"
+
+
+def _source_priority(path: Path) -> float:
+    if ".template." in path.name:
+        return 0.15
+    source_type = _source_type(path)
+    return {
+        "internal": 1.0,
+        "local": 0.75,
+        "mitre": 0.65,
+        "owasp": 0.60,
+        "portswigger": 0.55,
+    }[source_type]
+
+
+def _control_areas(text: str) -> list[str]:
+    terms = set(text.lower().replace("-", " ").split())
+    return [
+        area
+        for area, keywords in CONTROL_AREA_TERMS.items()
+        if terms.intersection(keywords)
+    ]

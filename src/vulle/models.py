@@ -41,6 +41,21 @@ class RagSource(BaseModel):
     chunk_id: str | None = None
 
 
+class EvidenceReference(BaseModel):
+    source_id: str
+    evidence_quote: str
+    relevance: str
+
+
+class AnalysisMetadata(BaseModel):
+    app_version: str
+    prompt_version: str
+    target_profile: str
+    llm_model: str
+    embedding_model: str
+    qdrant_collection: str
+
+
 class RiskHypothesis(BaseModel):
     title: str
     vulnerability_class: str
@@ -48,7 +63,10 @@ class RiskHypothesis(BaseModel):
     likely_entry_points: list[str] = Field(default_factory=list)
     affected_roles: list[str] = Field(default_factory=list)
     confidence: Literal["low", "medium", "high"]
+    confidence_reason: str
     severity_hint: Literal["info", "low", "medium", "high", "critical"]
+    supporting_evidence: list[EvidenceReference]
+    assumptions: list[str] = Field(default_factory=list)
 
 
 class TestIdea(BaseModel):
@@ -59,13 +77,17 @@ class TestIdea(BaseModel):
     expected_secure_behavior: str
     evidence_to_collect: list[str] = Field(default_factory=list)
     safety_notes: list[str] = Field(default_factory=list)
+    supporting_evidence: list[EvidenceReference]
+    assumptions: list[str] = Field(default_factory=list)
 
 
 class JiraSecurityAnalysis(BaseModel):
     issue_key: str
+    analysis_metadata: AnalysisMetadata | None = None
     rag_status: Literal["not_configured", "ok", "empty", "failed"] = "not_configured"
     rag_error: str | None = None
     rag_sources: list[RagSource] = Field(default_factory=list)
+    citation_warnings: list[str] = Field(default_factory=list)
     change_summary: str
     business_flows: list[str] = Field(default_factory=list)
     assets_or_entry_points: list[str] = Field(default_factory=list)
