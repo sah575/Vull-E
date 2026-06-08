@@ -6,7 +6,7 @@ import typer
 from rich.console import Console
 
 from vulle.agents.jira_analysis import analyze_jira_issue
-from vulle.banner import BANNER
+from vulle.banner import render_banner
 from vulle.confluence_client import ConfluenceClient, extract_confluence_urls
 from vulle.config import get_settings, set_active_profile
 from vulle.jira_client import JiraClient, jira_payload_to_issue
@@ -43,7 +43,7 @@ def main(
 @app.command("analyze-jira")
 def analyze_jira(issue_key: str, output: Path | None = None) -> None:
     """Fetch a Jira issue and analyze it with the local LLM."""
-    console.print(f"[bold cyan]{BANNER}[/bold cyan]")
+    render_banner(console)
     settings = get_settings()
     issue = JiraClient(settings).get_issue(issue_key)
     confluence_pages = _load_confluence_pages(issue, settings)
@@ -54,7 +54,7 @@ def analyze_jira(issue_key: str, output: Path | None = None) -> None:
 @app.command("analyze-file")
 def analyze_file(path: Path, output: Path | None = None) -> None:
     """Analyze a Jira-like JSON file without connecting to Jira."""
-    console.print(f"[bold cyan]{BANNER}[/bold cyan]")
+    render_banner(console)
     payload = json.loads(path.read_text(encoding="utf-8"))
     issue = _issue_from_file_payload(payload)
     confluence_pages = payload.get("confluence_pages", [])
@@ -102,7 +102,7 @@ def rag_eval(
 @app.command("banner")
 def show_banner() -> None:
     """Print the Vull-E banner."""
-    console.print(f"[bold cyan]{BANNER}[/bold cyan]")
+    render_banner(console)
 
 
 @app.command("doctor")

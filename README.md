@@ -3,15 +3,15 @@
 Vull-E is an agentic security-analysis prototype for pre-deployment review.
 
 ```text
- __      __        _  _             ______
- \ \    / /       | || |           |  ____|
-  \ \  / /  _   _ | || |  ______  | |__
-   \ \/ /  | | | || || | |______| |  __|
-    \  /   | |_| || || |          | |____
-     \/     \__,_||_||_|          |______|
+V   V  U   U  L      L       EEEEE
+V   V  U   U  L      L       E
+V   V  U   U  L      L       EEEE
+ V V   U   U  L      L       E
+  V     UUU   LLLLL  LLLLL   EEEEE
 
- Agentic Pre-Deployment Security Analysis
- Local LLM + Jira Intelligence + Future Burp MCP
+PRE-DEPLOYMENT SECURITY INTELLIGENCE
+JIRA + CONFLUENCE > RAG > RISK HYPOTHESES > TEST PLANS
+LOCAL-FIRST | EVIDENCE-BOUND | HUMAN-REVIEWED
 ```
 
 The first milestone analyzes Jira issues with a local OpenAI-compatible model
