@@ -1,6 +1,11 @@
-from vulle.agents.jira_analysis import _validate_evidence_references
+from vulle.agents.jira_analysis import (
+    _evidence_context,
+    _validate_evidence_references,
+)
 from vulle.models import (
     EvidenceReference,
+    GraphState,
+    JiraIssue,
     JiraSecurityAnalysis,
     RiskHypothesis,
 )
@@ -214,3 +219,109 @@ def test_fake_source_id_is_rejected() -> None:
 
     assert validated.risk_hypotheses[0].supporting_evidence == []
     assert validated.risk_hypotheses[0].confidence == "low"
+
+
+def test_duplicate_evidence_does_not_increase_confidence() -> None:
+    evidence = EvidenceReference(
+        source_id="jira:BANK-6:description",
+        evidence_quote="Checker users approve documents for their assigned branch",
+        evidence_type="system_fact",
+        relevance="Concrete role requirement",
+    )
+    analysis = JiraSecurityAnalysis(
+        issue_key="BANK-6",
+        change_summary="Change",
+        risk_hypotheses=[
+            RiskHypothesis(
+                title="Cross-branch approval",
+                vulnerability_class="Authorization",
+                rationale="Branch scope must be enforced",
+                confidence="high",
+                confidence_reason="Repeated evidence",
+                severity_hint="high",
+                supporting_evidence=[evidence, evidence, evidence],
+            )
+        ],
+    )
+
+    validated = _validate_evidence_references(
+        analysis,
+        {
+            "jira:BANK-6:description": {
+                "text": "Checker users approve documents for their assigned branch",
+                "evidence_type": "business_requirement",
+                "is_template": False,
+            }
+        },
+    )
+    risk = validated.risk_hypotheses[0]
+
+    assert len(risk.supporting_evidence) == 1
+    assert risk.confidence == "medium"
+    assert "business_requirement=1" in risk.confidence_reason
+
+
+def test_multiple_quotes_from_same_source_are_scored_once() -> None:
+    source_text = (
+        "Checker users approve documents for their assigned branch. "
+        "The approval endpoint records the acting checker identity."
+    )
+    evidence = [
+        EvidenceReference(
+            source_id="jira:BANK-7:description",
+            evidence_quote="Checker users approve documents for their assigned branch",
+            evidence_type="system_fact",
+            relevance="Role requirement",
+        ),
+        EvidenceReference(
+            source_id="jira:BANK-7:description",
+            evidence_quote="The approval endpoint records the acting checker identity",
+            evidence_type="system_fact",
+            relevance="Audit requirement",
+        ),
+    ]
+    analysis = JiraSecurityAnalysis(
+        issue_key="BANK-7",
+        change_summary="Change",
+        risk_hypotheses=[
+            RiskHypothesis(
+                title="Approval risk",
+                vulnerability_class="Authorization",
+                rationale="Approval needs role checks",
+                confidence="high",
+                confidence_reason="Multiple quotes",
+                severity_hint="high",
+                supporting_evidence=evidence,
+            )
+        ],
+    )
+
+    validated = _validate_evidence_references(
+        analysis,
+        {
+            "jira:BANK-7:description": {
+                "text": source_text,
+                "evidence_type": "business_requirement",
+                "is_template": False,
+            }
+        },
+    )
+
+    assert len(validated.risk_hypotheses[0].supporting_evidence) == 2
+    assert validated.risk_hypotheses[0].confidence == "medium"
+    assert "business_requirement=1" in validated.risk_hypotheses[0].confidence_reason
+
+
+def test_jira_comments_are_assumptions_not_system_facts() -> None:
+    issue = JiraIssue(
+        key="BANK-8",
+        summary="Approval change request",
+        description="Add a branch approval workflow for checker users",
+        comments=["I think branch ownership is already checked by the service"],
+    )
+
+    context = _evidence_context(GraphState(issue=issue))
+
+    assert context["jira:BANK-8:summary"]["evidence_type"] == "business_requirement"
+    assert context["jira:BANK-8:description"]["evidence_type"] == "business_requirement"
+    assert context["jira:BANK-8:comments"]["evidence_type"] == "assumption"

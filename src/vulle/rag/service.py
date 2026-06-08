@@ -7,7 +7,7 @@ from vulle.models import ConfluencePage, JiraIssue, RagChunk, SecurityFacet
 from vulle.rag.documents import document_ids_for_path, load_documents, normalized_path
 from vulle.rag.embeddings import EmbeddingClient
 from vulle.rag.qdrant_store import QdrantRagStore
-from vulle.security import PiiRedactionMode, redact_text
+from vulle.security import PiiRedactionMode, redact_data, redact_text
 
 TOKEN_PATTERN = re.compile(r"[a-zA-Z0-9_./{}:-]+")
 ENDPOINT_PATTERN = re.compile(
@@ -93,7 +93,13 @@ class RagService:
         return len(chunks)
 
     def search(self, query: str, limit: int | None = None) -> list[RagChunk]:
-        redacted_query = redact_text(query) or ""
+        redacted_query = (
+            redact_text(
+                query,
+                pii_mode=self._settings.pii_redaction_mode,
+            )
+            or ""
+        )
         result_limit = limit or self._settings.rag_top_k
         candidate_limit = result_limit * self._settings.rag_candidate_multiplier
         vector = self._embeddings.embed_query(redacted_query)
@@ -143,16 +149,19 @@ def build_issue_queries(
     pii_mode: PiiRedactionMode = "off",
 ) -> list[str]:
     text = _issue_text(issue, confluence_pages, pii_mode=pii_mode)
-    payload = {
-        "summary": issue.summary,
-        "description": issue.description,
-        "acceptance_criteria": issue.acceptance_criteria,
-        "labels": issue.labels,
-        "components": issue.components,
-        "comments": issue.comments,
-        "confluence_titles": [page.title for page in confluence_pages],
-        "confluence_excerpt": [page.body_text[:1200] for page in confluence_pages],
-    }
+    payload = redact_data(
+        {
+            "summary": issue.summary,
+            "description": issue.description,
+            "acceptance_criteria": issue.acceptance_criteria,
+            "labels": issue.labels,
+            "components": issue.components,
+            "comments": issue.comments,
+            "confluence_titles": [page.title for page in confluence_pages],
+            "confluence_excerpt": [page.body_text[:1200] for page in confluence_pages],
+        },
+        pii_mode=pii_mode,
+    )
     facets = extract_security_facets(text)
     queries = [json.dumps(payload, ensure_ascii=False)]
     queries.extend(

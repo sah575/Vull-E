@@ -243,12 +243,12 @@ def _evidence_context(
     sources = {
         f"jira:{issue.key}:summary": {
             "text": issue.summary,
-            "evidence_type": "system_fact",
+            "evidence_type": "business_requirement",
             "is_template": False,
         },
         f"jira:{issue.key}:description": {
             "text": issue.description or "",
-            "evidence_type": "system_fact",
+            "evidence_type": "business_requirement",
             "is_template": False,
         },
         f"jira:{issue.key}:acceptance_criteria": {
@@ -258,7 +258,7 @@ def _evidence_context(
         },
         f"jira:{issue.key}:comments": {
             "text": "\n".join(issue.comments),
-            "evidence_type": "system_fact",
+            "evidence_type": "assumption",
             "is_template": False,
         },
     }
@@ -347,6 +347,7 @@ def _validated_evidence(
     evidence_context: dict[str, dict[str, Any]],
 ) -> list[EvidenceReference]:
     validated = []
+    seen: set[tuple[str, str]] = set()
     for item in evidence_items:
         context = evidence_context.get(item.source_id)
         if context is None or not _quote_is_valid(
@@ -354,6 +355,13 @@ def _validated_evidence(
             str(context["text"]),
         ):
             continue
+        evidence_key = (
+            item.source_id,
+            _normalize_quote(item.evidence_quote),
+        )
+        if evidence_key in seen:
+            continue
+        seen.add(evidence_key)
         validated.append(
             item.model_copy(update={"evidence_type": context["evidence_type"]})
         )
@@ -361,11 +369,15 @@ def _validated_evidence(
 
 
 def _quote_is_valid(evidence_quote: str, source_text: str) -> bool:
-    normalized_quote = " ".join(evidence_quote.lower().split())
+    normalized_quote = _normalize_quote(evidence_quote)
     if len(normalized_quote.split()) < 5 or len(normalized_quote) > 500:
         return False
-    normalized_source = " ".join(source_text.lower().split())
+    normalized_source = _normalize_quote(source_text)
     return normalized_quote in normalized_source
+
+
+def _normalize_quote(value: str) -> str:
+    return " ".join(value.lower().split())
 
 
 def _deterministic_confidence(
@@ -381,22 +393,27 @@ def _deterministic_confidence(
         "security_guidance": 0,
         "assumption": -1,
     }
-    score = sum(weights[item.evidence_type] for item in evidence_items)
+    unique_sources: dict[str, EvidenceReference] = {}
+    for item in evidence_items:
+        unique_sources.setdefault(item.source_id, item)
+    scored_evidence = list(unique_sources.values())
+
+    score = sum(weights[item.evidence_type] for item in scored_evidence)
     score -= min(len(assumptions), 2)
     score -= sum(
         1
-        for item in evidence_items
+        for item in scored_evidence
         if evidence_context[item.source_id].get("is_template")
     )
     if any(
         re.search(r"\b(?:GET|POST|PUT|PATCH|DELETE)\s+/\S+", item.evidence_quote, re.I)
-        for item in evidence_items
+        for item in scored_evidence
     ):
         score += 1
 
     has_system_evidence = any(
         item.evidence_type in {"system_fact", "business_requirement"}
-        for item in evidence_items
+        for item in scored_evidence
     )
     if score >= 5 and has_system_evidence:
         confidence = "high"
@@ -405,7 +422,7 @@ def _deterministic_confidence(
     else:
         confidence = "low"
     counts: dict[str, int] = {}
-    for item in evidence_items:
+    for item in scored_evidence:
         counts[item.evidence_type] = counts.get(item.evidence_type, 0) + 1
     evidence_summary = ", ".join(
         f"{kind}={count}" for kind, count in sorted(counts.items())

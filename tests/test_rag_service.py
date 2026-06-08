@@ -1,5 +1,7 @@
+from vulle.config import Settings
 from vulle.models import JiraIssue, RagChunk
 from vulle.rag.service import (
+    RagService,
     build_issue_queries,
     extract_security_facets,
     rerank_chunks,
@@ -37,6 +39,46 @@ def test_security_facets_only_include_detected_areas() -> None:
     assert {"authorization", "business_logic", "file_handling", "audit_logging"} <= facet_types
     assert "ssrf_integration" not in facet_types
     assert any("documentId" in facet.terms for facet in facets)
+
+
+def test_issue_payload_masks_pii_before_retrieval() -> None:
+    iban = "TR330006100519786457841326"
+    issue = JiraIssue(
+        key="BANK-PII",
+        summary="Customer payment update",
+        description=f"Customer IBAN is {iban}",
+    )
+
+    queries = build_issue_queries(issue, [], pii_mode="mask")
+
+    assert iban not in "\n".join(queries)
+    assert "[REDACTED:PII]" in queries[0]
+
+
+def test_search_masks_pii_before_embedding() -> None:
+    class FakeEmbeddings:
+        embedded_query = ""
+
+        def embed_query(self, query: str) -> list[float]:
+            self.embedded_query = query
+            return [0.0]
+
+    class FakeStore:
+        def search(self, vector: list[float], limit: int) -> list[RagChunk]:
+            return []
+
+    settings = Settings(_env_file=None, pii_redaction_mode="mask")
+    service = object.__new__(RagService)
+    service._settings = settings
+    embeddings = FakeEmbeddings()
+    service._embeddings = embeddings  # type: ignore[assignment]
+    service._store = FakeStore()  # type: ignore[assignment]
+    iban = "TR330006100519786457841326"
+
+    service.search(f"Find policy for {iban}")
+
+    assert iban not in embeddings.embedded_query
+    assert "[REDACTED:PII]" in embeddings.embedded_query
 
 
 def test_trim_context_keeps_context_under_limit() -> None:
