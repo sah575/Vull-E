@@ -30,7 +30,7 @@ jobs:
         run: mypy src/vulle
 
       - name: Tests and coverage
-        run: pytest --cov=vulle --cov-report=term-missing
+        run: pytest --cov=vulle --cov-report=term-missing --cov-fail-under=65
 
       - name: Bandit
         run: bandit -q -r src/vulle

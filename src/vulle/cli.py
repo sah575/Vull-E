@@ -11,6 +11,7 @@ from vulle.banner import render_banner
 from vulle.config import Settings, get_settings, set_active_profile
 from vulle.confluence_client import ConfluenceClient, extract_confluence_urls
 from vulle.doctor import run_doctor
+from vulle.errors import VulleError
 from vulle.jira_client import JiraClient, jira_payload_to_issue
 from vulle.models import ConfluencePage, JiraIssue
 from vulle.rag.evaluation import aggregate_results, evaluate_case
@@ -147,7 +148,7 @@ def _load_confluence_pages(
             "are not configured.[/yellow]"
         )
         return []
-    except httpx.HTTPError as exc:
+    except (httpx.HTTPError, VulleError) as exc:
         console.print(f"[yellow]Confluence pages could not be loaded: {exc}[/yellow]")
         return []
     if pages:

@@ -3,6 +3,14 @@ from typing import Any
 import httpx
 
 from vulle.config import Settings
+from vulle.errors import (
+    JiraCustomFieldNotFoundError,
+    ServiceResponseFormatError,
+    raise_for_response,
+    response_json,
+    tls_verify,
+    translate_http_error,
+)
 from vulle.models import JiraIssue
 
 
@@ -15,22 +23,63 @@ class JiraClient:
             base_url=settings.jira_base_url.rstrip("/"),
             auth=(settings.jira_email, settings.jira_api_token),
             timeout=30,
+            verify=tls_verify(
+                verify_ssl=settings.http_verify_ssl,
+                ca_bundle=settings.http_ca_bundle,
+            ),
         )
+        self._api_version = settings.jira_api_version
+        self._acceptance_criteria_field = settings.jira_acceptance_criteria_field
 
     def get_issue(self, issue_key: str) -> JiraIssue:
-        response = self._client.get(
-            f"/rest/api/3/issue/{issue_key}",
-            params={
-                "fields": "summary,description,issuetype,status,priority,labels,components,comment",
-            },
+        endpoint = f"/rest/api/{self._api_version}/issue/{issue_key}"
+        fields = [
+            "summary",
+            "description",
+            "issuetype",
+            "status",
+            "priority",
+            "labels",
+            "components",
+            "comment",
+        ]
+        if self._acceptance_criteria_field:
+            fields.append(self._acceptance_criteria_field)
+        try:
+            response = self._client.get(endpoint, params={"fields": ",".join(fields)})
+        except httpx.HTTPError as exc:
+            raise translate_http_error(exc, service="Jira", endpoint=endpoint) from exc
+        raise_for_response(response, service="Jira", endpoint=endpoint)
+        payload = response_json(response, service="Jira", endpoint=endpoint)
+        if not isinstance(payload, dict):
+            raise ServiceResponseFormatError("Jira issue response must be a JSON object.")
+        return jira_payload_to_issue(
+            payload,
+            acceptance_criteria_field=self._acceptance_criteria_field,
         )
-        response.raise_for_status()
-        payload = response.json()
-        return jira_payload_to_issue(payload)
+
+    def check_connection(self) -> None:
+        endpoint = f"/rest/api/{self._api_version}/myself"
+        try:
+            response = self._client.get(endpoint)
+        except httpx.HTTPError as exc:
+            raise translate_http_error(exc, service="Jira", endpoint=endpoint) from exc
+        raise_for_response(response, service="Jira", endpoint=endpoint)
 
 
-def jira_payload_to_issue(payload: dict[str, Any]) -> JiraIssue:
+def jira_payload_to_issue(
+    payload: dict[str, Any],
+    *,
+    acceptance_criteria_field: str | None = None,
+) -> JiraIssue:
     fields = payload.get("fields", {})
+    if not isinstance(fields, dict):
+        raise ServiceResponseFormatError("Jira issue response has no valid fields object.")
+    if acceptance_criteria_field and acceptance_criteria_field not in fields:
+        raise JiraCustomFieldNotFoundError(
+            "Configured Jira acceptance criteria field was not returned: "
+            f"{acceptance_criteria_field}. Verify JIRA_ACCEPTANCE_CRITERIA_FIELD."
+        )
     comments = fields.get("comment", {}).get("comments", [])
     components = fields.get("components") or []
 
@@ -46,7 +95,11 @@ def jira_payload_to_issue(payload: dict[str, Any]) -> JiraIssue:
         labels=fields.get("labels") or [],
         components=[item.get("name", "") for item in components if item.get("name")],
         comments=[text for text in comment_texts if text],
-        acceptance_criteria=_extract_acceptance_criteria(_adf_to_text(fields.get("description"))),
+        acceptance_criteria=(
+            _adf_to_text(fields.get(acceptance_criteria_field))
+            if acceptance_criteria_field
+            else _extract_acceptance_criteria(_adf_to_text(fields.get("description")))
+        ),
         raw=payload,
     )
 

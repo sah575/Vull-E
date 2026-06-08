@@ -55,10 +55,15 @@ Edit `.env`:
 JIRA_BASE_URL=https://jira.example.com
 JIRA_EMAIL=your.email@example.com
 JIRA_API_TOKEN=your-token
+JIRA_API_VERSION=3
+JIRA_ACCEPTANCE_CRITERIA_FIELD=
 
 CONFLUENCE_BASE_URL=https://jira.example.com/wiki
 CONFLUENCE_EMAIL=your.email@example.com
 CONFLUENCE_API_TOKEN=your-token
+
+HTTP_VERIFY_SSL=true
+HTTP_CA_BUNDLE=
 
 LLM_BASE_URL=http://127.0.0.1:8000/v1
 LLM_API_KEY=local-not-needed
@@ -119,6 +124,15 @@ Profile values override the shared `.env`. A target may override
 `QDRANT_COLLECTION` to isolate its internal knowledge. Do not commit profile
 files because they contain credentials.
 
+`JIRA_API_VERSION` and `JIRA_ACCEPTANCE_CRITERIA_FIELD` are profile-specific.
+Leave the field empty to extract an Acceptance Criteria/Kabul Kriterleri
+section from the description. Set it to the real Jira field ID, such as
+`customfield_12345`, after validating the bank Jira response.
+
+Keep `HTTP_VERIFY_SSL=true`. When the institution uses a private CA or TLS
+inspection proxy, set `HTTP_CA_BUNDLE` to the approved PEM chain. Disabling
+verification should only be a temporary diagnostic step.
+
 Set `PII_REDACTION_MODE=mask` in profiles where common email, phone, Turkish
 national ID, IBAN, and card-like values must be masked before embedding and LLM
 analysis. Secrets and credentials are always redacted; `off` only disables the
@@ -146,6 +160,8 @@ vulle --profile bank-a doctor
 The command checks:
 
 - Jira and Confluence configuration completeness
+- Jira authentication, API version, and endpoint reachability
+- Confluence authentication and endpoint reachability
 - LLM `/chat/completions` connectivity and JSON output compatibility
 - embedding `/embeddings` connectivity and configured vector dimensions
 - Qdrant connectivity, collection existence, and vector dimensions
@@ -329,6 +345,9 @@ docker compose config
 
 GitHub Actions runs these checks for pushes and pull requests and also scans
 the repository for committed secrets.
+
+Before moving to the bank environment, follow
+[`docs/bank-integration-checklist.md`](docs/bank-integration-checklist.md).
 
 ## Safety Notes
 

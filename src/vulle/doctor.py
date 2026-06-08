@@ -6,6 +6,17 @@ from pydantic import BaseModel, Field
 from qdrant_client import QdrantClient
 
 from vulle.config import Settings, active_profile_name, rag_scope
+from vulle.confluence_client import ConfluenceClient
+from vulle.errors import (
+    ServiceCompatibilityError,
+    ServiceResponseFormatError,
+    VulleError,
+    raise_for_response,
+    response_json,
+    tls_verify,
+    translate_http_error,
+)
+from vulle.jira_client import JiraClient
 
 
 class DoctorCheck(BaseModel):
@@ -39,6 +50,8 @@ def run_doctor(settings: Settings, *, offline: bool = False) -> DoctorReport:
     else:
         checks.extend(
             [
+                _jira_check(settings),
+                _confluence_check(settings),
                 _llm_check(settings),
                 _embedding_check(settings),
                 _qdrant_check(settings),
@@ -132,34 +145,116 @@ def _rag_scope_check(settings: Settings) -> DoctorCheck:
     )
 
 
+def _jira_check(settings: Settings) -> DoctorCheck:
+    if not all((settings.jira_base_url, settings.jira_email, settings.jira_api_token)):
+        return DoctorCheck(
+            name="jira",
+            status="warn",
+            message="Jira connectivity was not checked because configuration is incomplete.",
+        )
+    try:
+        JiraClient(settings).check_connection()
+    except VulleError as exc:
+        return DoctorCheck(
+            name="jira",
+            status="fail",
+            message=str(exc),
+            details={
+                "base_url": settings.jira_base_url,
+                "api_version": settings.jira_api_version,
+            },
+        )
+    return DoctorCheck(
+        name="jira",
+        status="pass",
+        message="Jira authentication and API endpoint are reachable.",
+        details={
+            "base_url": settings.jira_base_url,
+            "api_version": settings.jira_api_version,
+        },
+    )
+
+
+def _confluence_check(settings: Settings) -> DoctorCheck:
+    explicit = (
+        settings.confluence_base_url,
+        settings.confluence_email,
+        settings.confluence_api_token,
+    )
+    fallback = (
+        settings.jira_base_url,
+        settings.jira_email,
+        settings.jira_api_token,
+    )
+    if not all(explicit) and not (not any(explicit) and all(fallback)):
+        return DoctorCheck(
+            name="confluence",
+            status="warn",
+            message="Confluence connectivity was not checked because configuration is incomplete.",
+        )
+    try:
+        ConfluenceClient(settings).check_connection()
+    except VulleError as exc:
+        return DoctorCheck(
+            name="confluence",
+            status="fail",
+            message=str(exc),
+            details={"base_url": settings.confluence_base_url},
+        )
+    return DoctorCheck(
+        name="confluence",
+        status="pass",
+        message="Confluence authentication and API endpoint are reachable.",
+        details={"base_url": settings.confluence_base_url or "derived from Jira"},
+    )
+
+
 def _llm_check(settings: Settings) -> DoctorCheck:
     try:
-        response = httpx.post(
-            f"{settings.llm_base_url.rstrip('/')}/chat/completions",
-            headers={"Authorization": f"Bearer {settings.llm_api_key}"},
-            json={
-                "model": settings.llm_model,
-                "temperature": 0,
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": "Return only valid JSON.",
-                    },
-                    {
-                        "role": "user",
-                        "content": 'Return exactly {"status":"ok"} as JSON.',
-                    },
-                ],
-                "response_format": {"type": "json_object"},
-            },
-            timeout=20,
-        )
-        response.raise_for_status()
-        content = response.json()["choices"][0]["message"]["content"]
+        endpoint = f"{settings.llm_base_url.rstrip('/')}/chat/completions"
+        try:
+            response = httpx.post(
+                endpoint,
+                headers={"Authorization": f"Bearer {settings.llm_api_key}"},
+                json={
+                    "model": settings.llm_model,
+                    "temperature": 0,
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": "Return only valid JSON.",
+                        },
+                        {
+                            "role": "user",
+                            "content": 'Return exactly {"status":"ok"} as JSON.',
+                        },
+                    ],
+                    "response_format": {"type": "json_object"},
+                },
+                timeout=20,
+                verify=tls_verify(
+                    verify_ssl=settings.http_verify_ssl,
+                    ca_bundle=settings.http_ca_bundle,
+                ),
+            )
+        except httpx.HTTPError as exc:
+            raise translate_http_error(exc, service="LLM", endpoint=endpoint) from exc
+        if response.status_code == 400 and "response_format" in response.text.lower():
+            raise ServiceCompatibilityError(
+                "LLM endpoint rejected response_format=json_object."
+            )
+        raise_for_response(response, service="LLM", endpoint=endpoint)
+        response_payload = response_json(response, service="LLM", endpoint=endpoint)
+        try:
+            content = response_payload["choices"][0]["message"]["content"]  # type: ignore[index]
+        except (KeyError, IndexError, TypeError) as exc:
+            raise ServiceResponseFormatError(
+                "LLM response is missing choices[0].message.content."
+            ) from exc
         payload = json.loads(content)
         if payload.get("status") != "ok":
             raise ValueError("Model JSON did not contain status=ok")
-    except (httpx.HTTPError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+    except (VulleError, ValueError, json.JSONDecodeError) as exc:
         return DoctorCheck(
             name="llm",
             status="fail",
@@ -176,14 +271,32 @@ def _llm_check(settings: Settings) -> DoctorCheck:
 
 def _embedding_check(settings: Settings) -> DoctorCheck:
     try:
-        response = httpx.post(
-            f"{settings.embedding_base_url.rstrip('/')}/embeddings",
-            headers={"Authorization": f"Bearer {settings.embedding_api_key}"},
-            json={"model": settings.embedding_model, "input": ["Vull-E health check"]},
-            timeout=20,
-        )
-        response.raise_for_status()
-        vector = response.json()["data"][0]["embedding"]
+        endpoint = f"{settings.embedding_base_url.rstrip('/')}/embeddings"
+        try:
+            response = httpx.post(
+                endpoint,
+                headers={"Authorization": f"Bearer {settings.embedding_api_key}"},
+                json={"model": settings.embedding_model, "input": ["Vull-E health check"]},
+                timeout=20,
+                verify=tls_verify(
+                    verify_ssl=settings.http_verify_ssl,
+                    ca_bundle=settings.http_ca_bundle,
+                ),
+            )
+        except httpx.HTTPError as exc:
+            raise translate_http_error(
+                exc,
+                service="Embedding",
+                endpoint=endpoint,
+            ) from exc
+        raise_for_response(response, service="Embedding", endpoint=endpoint)
+        payload = response_json(response, service="Embedding", endpoint=endpoint)
+        try:
+            vector = payload["data"][0]["embedding"]  # type: ignore[index]
+        except (KeyError, IndexError, TypeError) as exc:
+            raise ServiceResponseFormatError(
+                "Embedding response is missing data[0].embedding."
+            ) from exc
         actual_dimensions = len(vector)
         if actual_dimensions != settings.embedding_dimensions:
             return DoctorCheck(
@@ -196,7 +309,7 @@ def _embedding_check(settings: Settings) -> DoctorCheck:
                     "actual_dimensions": actual_dimensions,
                 },
             )
-    except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as exc:
+    except (VulleError, TypeError, ValueError) as exc:
         return DoctorCheck(
             name="embedding",
             status="fail",
@@ -223,6 +336,10 @@ def _qdrant_check(settings: Settings) -> DoctorCheck:
             url=settings.qdrant_url,
             api_key=settings.qdrant_api_key,
             timeout=10,
+            verify=tls_verify(
+                verify_ssl=settings.http_verify_ssl,
+                ca_bundle=settings.http_ca_bundle,
+            ),
         )
         names = {item.name for item in client.get_collections().collections}
         if settings.qdrant_collection not in names:

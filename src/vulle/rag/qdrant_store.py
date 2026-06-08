@@ -4,6 +4,7 @@ from qdrant_client import QdrantClient
 from qdrant_client.http import models as qmodels
 
 from vulle.config import Settings, rag_scope
+from vulle.errors import tls_verify
 from vulle.models import RagChunk
 
 
@@ -16,6 +17,10 @@ class QdrantRagStore:
             url=settings.qdrant_url,
             api_key=settings.qdrant_api_key,
             timeout=30,
+            verify=tls_verify(
+                verify_ssl=settings.http_verify_ssl,
+                ca_bundle=settings.http_ca_bundle,
+            ),
         )
 
     def ensure_collection(self, *, ensure_payload_indexes: bool = False) -> None:

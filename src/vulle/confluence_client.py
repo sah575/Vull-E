@@ -6,6 +6,13 @@ from urllib.parse import parse_qs, urlparse
 import httpx
 
 from vulle.config import Settings
+from vulle.errors import (
+    ServiceResponseFormatError,
+    raise_for_response,
+    response_json,
+    tls_verify,
+    translate_http_error,
+)
 from vulle.models import ConfluencePage, JiraIssue
 
 
@@ -24,7 +31,15 @@ class ConfluenceClient:
             )
 
         self._base_url = base_url.rstrip("/")
-        self._client = httpx.Client(base_url=self._base_url, auth=(email, token), timeout=30)
+        self._client = httpx.Client(
+            base_url=self._base_url,
+            auth=(email, token),
+            timeout=30,
+            verify=tls_verify(
+                verify_ssl=settings.http_verify_ssl,
+                ca_bundle=settings.http_ca_bundle,
+            ),
+        )
 
     def get_page(self, page_id: str) -> ConfluencePage:
         payload = self._fetch_page_payload(page_id)
@@ -61,20 +76,48 @@ class ConfluenceClient:
     def _fetch_page_payload(self, page_id: str) -> dict[str, Any]:
         # Atlassian Cloud and many Server/DC instances support this endpoint.
         api_prefix = "" if self._base_url.endswith("/wiki") else "/wiki"
-        response = self._client.get(
-            f"{api_prefix}/rest/api/content/{page_id}",
-            params={"expand": "body.storage,body.view,space,_links"},
-        )
-        if response.status_code == 404:
+        endpoint = f"{api_prefix}/rest/api/content/{page_id}"
+        try:
             response = self._client.get(
-                f"/rest/api/content/{page_id}",
+                endpoint,
                 params={"expand": "body.storage,body.view,space,_links"},
             )
-        response.raise_for_status()
-        payload = response.json()
+        except httpx.HTTPError as exc:
+            raise translate_http_error(
+                exc,
+                service="Confluence",
+                endpoint=endpoint,
+            ) from exc
+        if response.status_code == 404:
+            endpoint = f"/rest/api/content/{page_id}"
+            try:
+                response = self._client.get(
+                    endpoint,
+                    params={"expand": "body.storage,body.view,space,_links"},
+                )
+            except httpx.HTTPError as exc:
+                raise translate_http_error(
+                    exc,
+                    service="Confluence",
+                    endpoint=endpoint,
+                ) from exc
+        raise_for_response(response, service="Confluence", endpoint=endpoint)
+        payload = response_json(response, service="Confluence", endpoint=endpoint)
         if not isinstance(payload, dict):
-            raise ValueError("Confluence response must be a JSON object")
+            raise ServiceResponseFormatError("Confluence response must be a JSON object.")
         return payload
+
+    def check_connection(self) -> None:
+        endpoint = "/rest/api/space"
+        try:
+            response = self._client.get(endpoint, params={"limit": 1})
+        except httpx.HTTPError as exc:
+            raise translate_http_error(
+                exc,
+                service="Confluence",
+                endpoint=endpoint,
+            ) from exc
+        raise_for_response(response, service="Confluence", endpoint=endpoint)
 
     def _page_url(self, payload: dict[str, Any]) -> str | None:
         links = payload.get("_links") or {}

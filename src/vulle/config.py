@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     jira_base_url: str | None = None
     jira_email: str | None = None
     jira_api_token: str | None = None
+    jira_api_version: str = "3"
+    jira_acceptance_criteria_field: str | None = None
 
     confluence_base_url: str | None = None
     confluence_email: str | None = None
@@ -28,6 +30,8 @@ class Settings(BaseSettings):
     llm_json_repair_attempts: int = Field(default=1, ge=0, le=3)
     llm_http_retries: int = Field(default=2, ge=0, le=5)
     pii_redaction_mode: Literal["off", "mask"] = "off"
+    http_verify_ssl: bool = True
+    http_ca_bundle: Path | None = None
 
     embedding_base_url: str = "http://127.0.0.1:8000/v1"
     embedding_api_key: str = "local-not-needed"

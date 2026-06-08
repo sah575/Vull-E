@@ -6,6 +6,14 @@ import httpx
 from pydantic import BaseModel, ValidationError
 
 from vulle.config import Settings
+from vulle.errors import (
+    ServiceCompatibilityError,
+    ServiceResponseFormatError,
+    raise_for_response,
+    response_json,
+    tls_verify,
+    translate_http_error,
+)
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -13,11 +21,18 @@ T = TypeVar("T", bound=BaseModel)
 class LLMClient:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
+        verify = tls_verify(
+            verify_ssl=settings.http_verify_ssl,
+            ca_bundle=settings.http_ca_bundle,
+        )
         self._client = httpx.Client(
             base_url=settings.llm_base_url.rstrip("/"),
             headers={"Authorization": f"Bearer {settings.llm_api_key}"},
             timeout=120,
-            transport=httpx.HTTPTransport(retries=settings.llm_http_retries),
+            transport=httpx.HTTPTransport(
+                retries=settings.llm_http_retries,
+                verify=verify,
+            ),
         )
 
     def complete_json(self, system: str, user: str, schema: type[T]) -> T:
@@ -41,26 +56,41 @@ class LLMClient:
             ) from last_error
 
     def _request(self, system: str, user: str, temperature: float | None = None) -> str:
-        response = self._client.post(
-            "/chat/completions",
-            json={
-                "model": self._settings.llm_model,
-                "temperature": (
-                    self._settings.llm_temperature
-                    if temperature is None
-                    else temperature
-                ),
-                "messages": [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
-                "response_format": {"type": "json_object"},
-            },
-        )
-        response.raise_for_status()
-        content = response.json()["choices"][0]["message"]["content"]
+        endpoint = "/chat/completions"
+        try:
+            response = self._client.post(
+                endpoint,
+                json={
+                    "model": self._settings.llm_model,
+                    "temperature": (
+                        self._settings.llm_temperature
+                        if temperature is None
+                        else temperature
+                    ),
+                    "messages": [
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user},
+                    ],
+                    "response_format": {"type": "json_object"},
+                },
+            )
+        except httpx.HTTPError as exc:
+            raise translate_http_error(exc, service="LLM", endpoint=endpoint) from exc
+        if response.status_code == 400 and "response_format" in response.text.lower():
+            raise ServiceCompatibilityError(
+                "LLM endpoint rejected response_format=json_object. "
+                "The configured OpenAI-compatible server does not support structured JSON."
+            )
+        raise_for_response(response, service="LLM", endpoint=endpoint)
+        payload = response_json(response, service="LLM", endpoint=endpoint)
+        try:
+            content = payload["choices"][0]["message"]["content"]  # type: ignore[index]
+        except (KeyError, IndexError, TypeError) as exc:
+            raise ServiceResponseFormatError(
+                "LLM response is missing choices[0].message.content."
+            ) from exc
         if not isinstance(content, str):
-            raise ValueError("LLM response content must be a string")
+            raise ServiceResponseFormatError("LLM response content must be a string.")
         return content
 
     @staticmethod
