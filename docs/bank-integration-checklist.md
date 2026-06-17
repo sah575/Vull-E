@@ -1,7 +1,28 @@
-# Bank Environment Integration Checklist
+# Bank Pilot Migration Runbook
 
-Use this checklist on the target device before changing retrieval or agent
-architecture. Record non-secret results, timings, and error messages.
+Use this runbook on the target device before changing retrieval or agent
+architecture. Record non-secret results, timings, command output paths, and
+error messages. Do not proceed through a gate while any required check is red.
+
+## 0. Release Baseline
+
+1. Use the tagged pre-bank-pilot release as the deployment baseline.
+2. Confirm the worktree only contains deployment-local ignored files:
+
+```bash
+git fetch --tags
+git checkout v0.1.0-pre-bank-pilot
+git status --short
+```
+
+3. Do not develop new features during the pilot. Only allow configuration,
+   sanitized knowledge updates, and defect fixes approved from observed pilot
+   evidence.
+4. Keep all target secrets, internal documents, reports, and profiles outside
+   Git or under ignored paths.
+
+Go/no-go: stop if the tag is missing, the checkout is dirty with tracked code
+changes, or the deployed commit differs from the approved pilot baseline.
 
 ## 1. Installation And Baseline
 
@@ -15,9 +36,14 @@ ruff check src tests
 mypy src/vulle
 pytest --cov=vulle --cov-report=term-missing --cov-fail-under=65
 bandit -q -r src/vulle
+pip-audit --requirement constraints.txt
+docker compose config
 ```
 
 Expected: every command exits with status zero.
+
+Go/no-go: stop if any command fails. Fix the baseline in development, retag a
+new approved pilot baseline, and redeploy.
 
 ## 2. Target Profile
 
@@ -35,6 +61,10 @@ Expected: every command exits with status zero.
 git status --short
 vulle --profile <target> doctor --offline
 ```
+
+Go/no-go: stop if credentials are missing, the CA bundle is not approved, the
+profile appears in `git status`, or the offline doctor reports failed required
+configuration.
 
 ## 3. Network Access
 
@@ -56,6 +86,11 @@ The doctor report distinguishes connection, timeout, authentication,
 permission, TLS certificate, endpoint, response-format, dimension, and Qdrant
 compatibility failures.
 
+Go/no-go: stop if Jira, LLM, embedding, or Qdrant are required for the pilot and
+doctor reports connection, TLS, authentication, permission, dimension, or
+response-format failures. Confluence may remain disabled only when the pilot
+scope explicitly excludes linked-page analysis.
+
 ## 4. Jira Validation
 
 1. Confirm authentication succeeds.
@@ -68,6 +103,10 @@ compatibility failures.
 6. Confirm the configured custom field is present and contains expected text.
 7. Confirm issue permissions match the intended review scope.
 
+Go/no-go: stop if the test issue cannot be fetched, if parsed fields are empty
+or wrong, or if the service account can read issues outside the approved pilot
+scope.
+
 ## 5. Confluence Validation
 
 1. Confirm authentication and space visibility.
@@ -75,6 +114,9 @@ compatibility failures.
 3. Check tables, headings, links, and page body text.
 4. Record whether Server/DC or Cloud endpoint behavior differs.
 5. Confirm no page outside the intended target scope is retrieved.
+
+Go/no-go: stop if linked pages cannot be fetched when Confluence is in scope, or
+if the service account can read spaces outside the approved pilot scope.
 
 ## 6. Local Model Validation
 
@@ -86,21 +128,75 @@ compatibility failures.
 
 Do not add model-specific workarounds until actual incompatibility is observed.
 
+Go/no-go: stop if the model cannot return valid JSON after the configured repair
+attempts, if latency exceeds the pilot SLA, or if requests leave the approved
+local environment.
+
 ## 7. Embedding And Qdrant
 
 1. Confirm the embedding model name and vector dimension.
 2. Confirm the Qdrant collection dimension matches.
 3. Confirm tenant, environment, and knowledge-base scope values.
-4. Index only sanitized target documents:
+4. Preview every index run before writing vectors:
+
+```bash
+vulle --profile <target> rag-index docs/knowledge --dry-run \
+  --output .vulle/reports/local-knowledge-dry-run.json
+```
+
+5. Review the dry-run report:
+   - `files_failed` must be `0`.
+   - `chunks_created` must be non-zero for intended knowledge roots.
+   - skipped files must match expected templates, private paths, or unsupported
+     files.
+   - warnings must be understood and recorded.
+6. Index only sanitized target documents after dry-run approval:
 
 ```bash
 vulle --profile <target> rag-index docs/knowledge --sync
 ```
 
-5. Search an exact endpoint, identifier, role, and business-flow term.
-6. Verify every result belongs to the active target scope.
+7. Search an exact endpoint, identifier, role, and business-flow term.
+8. Verify every result belongs to the active target scope.
 
-## 8. First Analysis
+Go/no-go: stop if dry-run selection is wrong, if Qdrant dimensions do not match,
+if scope metadata is missing, or if searches return another tenant,
+environment, or knowledge base.
+
+## 8. Optional HackTricks Source
+
+HackTricks is external testing guidance. It is not bank policy, a business
+requirement, a system fact, or proof of a vulnerability.
+
+1. Confirm the local HackTricks clone path and license review status.
+2. Preview the selected subset:
+
+```bash
+vulle --profile <target> rag-index-hacktricks /path/to/hacktricks \
+  --dry-run \
+  --output .vulle/reports/hacktricks-dry-run.json
+```
+
+3. Review the dry-run report:
+   - `files_failed` must be `0`.
+   - accepted files must be Web/API/AppSec methodology, primarily
+     `pentesting-web` and `network-services-pentesting/pentesting-web`.
+   - excluded files must include binary exploitation, reverse engineering,
+     OS privilege escalation, Active Directory, cloud, Kubernetes, wireless,
+     CTF, mobile, hardware physical access, todo, and welcome content.
+   - `chunks_upserted` must be `0` in dry-run mode.
+4. Index HackTricks only after explicit approval:
+
+```bash
+vulle --profile <target> rag-index-hacktricks /path/to/hacktricks --sync \
+  --output .vulle/reports/hacktricks-index-report.json
+```
+
+Go/no-go: stop if the dry-run includes off-scope sources, license review is not
+approved, or stakeholders do not want external testing guidance in the pilot
+knowledge base.
+
+## 9. First Analysis
 
 Use one sanitized, representative Jira issue:
 
@@ -120,7 +216,11 @@ Review:
 - safe, executable test steps
 - no claim of a confirmed vulnerability without runtime evidence
 
-## 9. Data Protection
+Go/no-go: stop if citations are missing, evidence quotes do not exist in the
+cited source, the report treats guidance as proof, or sensitive values are
+visible.
+
+## 10. Data Protection
 
 1. Use `PII_REDACTION_MODE=mask` for the pilot.
 2. Confirm tokens, cookies, API keys, private keys, and connection strings do
@@ -130,7 +230,10 @@ Review:
 4. Inspect generated reports before sharing or publishing.
 5. Never commit profile files, internal documents, reports, or credentials.
 
-## 10. Performance Record
+Go/no-go: stop if secrets or PII appear in logs, embeddings, LLM prompts,
+reports, or committed files.
+
+## 11. Performance Record
 
 Record:
 
@@ -142,6 +245,29 @@ Record:
 - total analysis duration
 - timeout or retry events
 
-Stop feature development after this baseline. Use observed Jira fields, model
-behavior, document quality, retrieval misses, and network constraints to choose
-the next engineering work.
+## 12. Rollback
+
+1. Disable the pilot profile or remove its credentials from the target device.
+2. Stop services that were started only for the pilot.
+3. Preserve non-secret reports and timing records under `.vulle/reports/`.
+4. If indexed data must be removed, delete only the approved target collection
+   or target-scoped points after confirming tenant, environment, and knowledge
+   base.
+5. Return the deployment checkout to the approved tag:
+
+```bash
+git checkout v0.1.0-pre-bank-pilot
+```
+
+## 13. Development Freeze
+
+After the pre-bank-pilot baseline is tagged:
+
+1. Stop feature development.
+2. Do not change prompts, ranking, indexing, chunking, source filters, security
+   controls, or connector behavior during the pilot unless a defect blocks a
+   go/no-go gate.
+3. Use observed Jira fields, model behavior, document quality, retrieval misses,
+   and network constraints to choose the next engineering work after the pilot.
+4. If a defect fix is required, create a new reviewed commit and tag. Do not
+   move the existing pilot tag.
