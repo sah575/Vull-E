@@ -1,5 +1,4 @@
 from pathlib import Path
-from types import SimpleNamespace
 
 from typer.testing import CliRunner
 
@@ -142,12 +141,14 @@ def test_git_commit_sha_falls_back_for_non_git_directory(tmp_path: Path) -> None
 
 
 def test_git_commit_sha_reads_repository_version(tmp_path: Path, monkeypatch) -> None:
-    def fake_run(*args, **kwargs):
-        return SimpleNamespace(returncode=0, stdout="abc123\n")
+    sha = "a" * 40
+    git_dir = tmp_path / ".git"
+    ref_dir = git_dir / "refs" / "heads"
+    ref_dir.mkdir(parents=True)
+    (git_dir / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+    (ref_dir / "main").write_text(f"{sha}\n", encoding="utf-8")
 
-    monkeypatch.setattr("vulle.rag.hacktricks.subprocess.run", fake_run)
-
-    assert git_commit_sha(tmp_path) == "abc123"
+    assert git_commit_sha(tmp_path) == sha
 
 
 def test_index_hacktricks_uses_replace_or_sync_without_real_services() -> None:

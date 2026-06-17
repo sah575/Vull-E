@@ -122,13 +122,15 @@ class RagService:
     def _embedding_client(self) -> EmbeddingLike:
         if getattr(self, "_embeddings", None) is None:
             self._embeddings = EmbeddingClient(self._settings)
-        assert self._embeddings is not None
+        if self._embeddings is None:
+            raise RuntimeError("Embedding client could not be initialized")
         return self._embeddings
 
     def _rag_store(self) -> RagStoreLike:
         if getattr(self, "_store", None) is None:
             self._store = QdrantRagStore(self._settings)
-        assert self._store is not None
+        if self._store is None:
+            raise RuntimeError("RAG store could not be initialized")
         return self._store
 
     def index_path(self, path: Path, *, sync: bool = False) -> int:

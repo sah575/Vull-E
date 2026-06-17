@@ -1,6 +1,5 @@
 import fnmatch
 import hashlib
-import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -287,19 +286,60 @@ def hacktricks_chunk_id(
 
 def git_commit_sha(root: Path) -> str:
     try:
-        result = subprocess.run(
-            ["git", "-C", str(root), "rev-parse", "HEAD"],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=3,
-        )
-    except (OSError, subprocess.SubprocessError):
+        git_dir = _git_dir(root)
+        if git_dir is None:
+            return "unknown"
+        head = (git_dir / "HEAD").read_text(encoding="utf-8").strip()
+        if _is_sha(head):
+            return head
+        if not head.startswith("ref: "):
+            return "unknown"
+        ref_name = head.removeprefix("ref: ").strip()
+        ref_path = git_dir / ref_name
+        if ref_path.is_file():
+            value = ref_path.read_text(encoding="utf-8").strip()
+            return value if _is_sha(value) else "unknown"
+        packed = git_dir / "packed-refs"
+        if packed.is_file():
+            return _sha_from_packed_refs(packed, ref_name)
+    except OSError:
         return "unknown"
-    sha = result.stdout.strip()
-    if result.returncode != 0 or not sha:
+    return "unknown"
+
+
+def _git_dir(root: Path) -> Path | None:
+    marker = root / ".git"
+    if marker.is_dir():
+        return marker
+    if not marker.is_file():
+        return None
+    try:
+        value = marker.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    if not value.startswith("gitdir: "):
+        return None
+    candidate = Path(value.removeprefix("gitdir: ").strip())
+    if not candidate.is_absolute():
+        candidate = root / candidate
+    return candidate if candidate.is_dir() else None
+
+
+def _sha_from_packed_refs(path: Path, ref_name: str) -> str:
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line or line.startswith(("#", "^")):
+                continue
+            parts = line.split(" ", 1)
+            if len(parts) == 2 and parts[1] == ref_name and _is_sha(parts[0]):
+                return parts[0]
+    except OSError:
         return "unknown"
-    return sha
+    return "unknown"
+
+
+def _is_sha(value: str) -> bool:
+    return len(value) == 40 and all(char in "0123456789abcdefABCDEF" for char in value)
 
 
 def clean_hacktricks_markdown(text: str) -> str:
