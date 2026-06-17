@@ -4,7 +4,13 @@ from pathlib import Path
 
 from vulle.config import Settings
 from vulle.models import ConfluencePage, JiraIssue, RagChunk, SecurityFacet
-from vulle.rag.documents import document_ids_for_path, load_documents, normalized_path
+from vulle.rag.documents import (
+    document_ids_for_path,
+    hacktricks_document_ids_for_path,
+    load_documents,
+    load_hacktricks_documents,
+    normalized_path,
+)
 from vulle.rag.embeddings import EmbeddingClient
 from vulle.rag.qdrant_store import QdrantRagStore
 from vulle.security import PiiRedactionMode, redact_data, redact_text
@@ -91,6 +97,33 @@ class RagService:
                 document_ids=document_ids_for_path(path),
             )
         return len(chunks)
+
+    def index_hacktricks(self, path: Path, *, sync: bool = False) -> dict[str, object]:
+        chunks, report = load_hacktricks_documents(
+            path,
+            pii_mode=self._settings.pii_redaction_mode,
+            id_namespace=self._settings.rag_knowledge_base_id
+            or f"{self._settings.qdrant_collection}:{self._settings.rag_environment}",
+        )
+        vectors = self._embeddings.embed_texts([chunk.text for chunk in chunks])
+        if sync:
+            self._store.sync_index_root(normalized_path(path), chunks, vectors)
+        else:
+            self._store.replace_documents(
+                chunks,
+                vectors,
+                document_ids=hacktricks_document_ids_for_path(path),
+            )
+        return {
+            "scanned_files": report.scanned_files,
+            "accepted_files": report.accepted_files,
+            "excluded_files": report.excluded_files,
+            "chunk_count": report.chunk_count,
+            "deduplicated_chunks": report.deduplicated_chunks,
+            "domain_counts": report.domain_counts,
+            "commit_sha": report.commit_sha,
+            "warnings": report.warnings,
+        }
 
     def search(self, query: str, limit: int | None = None) -> list[RagChunk]:
         redacted_query = (
@@ -264,23 +297,29 @@ def rerank_chunks(
         raise ValueError("At least one RAG reranking weight must be greater than zero")
 
     query_terms = _terms(query)
+    query_domains = _query_security_domains(query)
     ranked: list[RagChunk] = []
     for chunk in chunks:
         dense_score = max(min(_score(chunk), 1.0), 0.0)
         lexical_score = _lexical_score(query_terms, _terms(f"{chunk.title} {chunk.text}"))
         priority = _source_priority(chunk)
+        domain_score = _domain_score(query_domains, chunk)
         final_score = (
             dense_weight * dense_score
             + lexical_weight * lexical_score
             + source_weight * priority
         ) / total_weight
+        final_score = min(final_score + domain_score, 1.0)
         metadata = {
             **chunk.metadata,
             "retrieval": {
                 "dense_score": dense_score,
                 "lexical_score": lexical_score,
                 "source_priority": priority,
+                "domain_score": domain_score,
                 "final_score": final_score,
+                "query_terms": sorted(query_terms),
+                "source_type": chunk.metadata.get("source_type"),
             },
         }
         ranked.append(chunk.model_copy(update={"score": final_score, "metadata": metadata}))
@@ -315,4 +354,48 @@ def _source_priority(chunk: RagChunk) -> float:
         "mitre": 0.65,
         "owasp": 0.60,
         "portswigger": 0.55,
+        "external_pentest_methodology": 0.50,
     }.get(source_type, 0.50)
+
+
+def _query_security_domains(query: str) -> set[str]:
+    facets = extract_security_facets(query)
+    domains = {facet.type for facet in facets}
+    lowered = query.lower()
+    if "file upload" in lowered or "upload" in lowered:
+        domains.add("file_upload")
+    if "ssrf" in lowered or "webhook" in lowered:
+        domains.add("ssrf")
+    if "graphql" in lowered:
+        domains.add("graphql")
+    if "jwt" in lowered:
+        domains.add("jwt")
+    if "oauth" in lowered or "oidc" in lowered:
+        domains.add("oauth")
+    if "cors" in lowered:
+        domains.add("cors")
+    if "csrf" in lowered:
+        domains.add("csrf")
+    if "xss" in lowered:
+        domains.add("xss")
+    return domains
+
+
+def _domain_score(query_domains: set[str], chunk: RagChunk) -> float:
+    if not query_domains:
+        return 0.0
+    chunk_domains: set[str] = set()
+    primary_domain = chunk.metadata.get("security_domain")
+    if isinstance(primary_domain, str):
+        chunk_domains.add(primary_domain)
+    secondary_domains = chunk.metadata.get("security_domains")
+    if isinstance(secondary_domains, list):
+        chunk_domains.update(str(item) for item in secondary_domains)
+    if not query_domains.intersection(chunk_domains):
+        return 0.0
+    source_type = str(chunk.metadata.get("source_type") or "")
+    if source_type == "internal":
+        return 0.04
+    if source_type == "external_pentest_methodology":
+        return 0.03
+    return 0.02

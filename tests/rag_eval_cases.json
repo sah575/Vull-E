@@ -41,5 +41,39 @@
       "owasp/graphql-security.md"
     ],
     "expected_source_types": ["portswigger", "owasp"]
+  },
+  {
+    "query": "file upload document preview MIME extension validation",
+    "expected_source_types": ["external_pentest_methodology"],
+    "expected_security_domains": ["file_upload"]
+  },
+  {
+    "query": "maker checker self approval branch scope role matrix",
+    "must_retrieve": ["internal/role-matrix.template.md"],
+    "expected_source_types": ["internal"],
+    "forbidden_sources": ["linux-privesc.md"]
+  },
+  {
+    "query": "webhook callback SSRF private IP metadata service allowlist",
+    "expected_source_types": ["external_pentest_methodology"],
+    "expected_security_domains": ["ssrf"]
+  },
+  {
+    "query": "GraphQL mutation object authorization resolver tenant boundary",
+    "expected_source_types": ["external_pentest_methodology"],
+    "expected_security_domains": ["graphql", "access_control"]
+  },
+  {
+    "query": "JWT validation signature algorithm issuer audience authentication",
+    "expected_source_types": ["external_pentest_methodology"],
+    "expected_security_domains": ["jwt", "authentication"]
+  },
+  {
+    "query": "AppSec web API authorization should not retrieve linux privilege escalation",
+    "forbidden_sources": ["linux-privesc.md"]
+  },
+  {
+    "query": "internal policy conflicts with external HackTricks guidance",
+    "expected_source_types": ["internal", "external_pentest_methodology"]
   }
 ]

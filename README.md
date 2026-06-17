@@ -257,6 +257,54 @@ Search the knowledge base:
 vulle rag-search "maker checker document approval"
 ```
 
+## HackTricks RAG Source
+
+Vull-E can index a controlled subset of a locally cloned HackTricks repository
+as external AppSec/Web/API testing guidance:
+
+```bash
+vulle rag-index-hacktricks /path/to/hacktricks --sync
+```
+
+The command does not clone HackTricks from the internet. It only reads the local
+directory you provide. Selection is controlled by
+`config/hacktricks_sources.yml`, which contains allow and exclude path patterns,
+security-domain mappings, language, minimum content length, and source priority.
+The default profile focuses on Web/API topics such as authentication,
+authorization, IDOR/BOLA, file upload, SSRF, injection, JWT, OAuth/OIDC,
+GraphQL, WebSocket, race/replay, rate limiting, request smuggling,
+deserialization, open redirect, CORS, CSRF, XSS, path traversal, and HTTP
+parameter pollution. It excludes binary exploitation, reverse engineering,
+Active Directory, OS privilege escalation, forensics, wireless, CTF, cloud, and
+Kubernetes content.
+
+HackTricks chunks are marked as:
+
+```json
+{
+  "source_type": "external_pentest_methodology",
+  "source_name": "hacktricks",
+  "evidence_type": "security_guidance",
+  "authority_level": "guidance",
+  "license_review_required": true
+}
+```
+
+When the source directory is a Git repository, the current commit SHA is stored
+as `version`; otherwise `unknown` is used with a warning. Internal documents,
+Jira, and Confluence remain higher-priority evidence. HackTricks is useful for
+test objectives, negative tests, attack scenarios, and edge cases, but it is not
+bank policy, a business requirement, a system fact, or proof that a
+vulnerability exists. Review the current HackTricks license before internal use
+or redistribution.
+
+Evaluate retrieval behavior with the existing evaluator after indexing the
+desired sources:
+
+```bash
+vulle rag-eval tests/rag_eval_cases.json
+```
+
 Evaluate whether expected sources are retrieved for sample queries:
 
 ```bash

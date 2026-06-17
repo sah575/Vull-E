@@ -77,6 +77,30 @@ def rag_index(
     console.print(f"[green]Indexed {count} chunk(s) into {settings.qdrant_collection}.[/green]")
 
 
+@app.command("rag-index-hacktricks")
+def rag_index_hacktricks(
+    path: Path,
+    sync: bool = typer.Option(
+        False,
+        help="Replace the complete HackTricks index root and remove stale/deleted documents.",
+    ),
+) -> None:
+    """Index selected AppSec/Web/API HackTricks markdown documents into Qdrant."""
+    settings = get_settings()
+    if not path.exists() or not path.is_dir():
+        raise typer.BadParameter(
+            f"HackTricks path does not exist or is not a directory: {path}",
+            param_hint="PATH",
+        )
+    report = RagService(settings).index_hacktricks(path, sync=sync)
+    console.print(
+        "[yellow]HackTricks is external testing guidance, not bank policy or "
+        "vulnerability evidence. Review current license terms before internal "
+        "redistribution.[/yellow]"
+    )
+    _emit_json(report)
+
+
 @app.command("rag-search")
 def rag_search(query: str, limit: int | None = None) -> None:
     """Search the Qdrant-backed knowledge base."""

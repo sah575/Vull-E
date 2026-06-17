@@ -7,6 +7,16 @@ from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
 from vulle.models import RagChunk
+from vulle.rag.hacktricks import (
+    HACKTRICKS_SOURCE_NAME,
+    HACKTRICKS_SOURCE_TYPE,
+    HackTricksLoadReport,
+    classify_security_domains,
+    hacktricks_chunk_id,
+    is_low_value_chunk,
+    load_hacktricks_config,
+    select_hacktricks_documents,
+)
 from vulle.security import PiiRedactionMode, redact_text
 
 SUPPORTED_EXTENSIONS = {".md", ".txt", ".json"}
@@ -36,7 +46,17 @@ def load_documents(
     path: Path,
     *,
     pii_mode: PiiRedactionMode = "off",
+    source_profile: str = "default",
+    id_namespace: str = "",
 ) -> list[RagChunk]:
+    if source_profile == "hacktricks":
+        hacktricks_chunks, _ = load_hacktricks_documents(
+            path,
+            pii_mode=pii_mode,
+            id_namespace=id_namespace,
+        )
+        return hacktricks_chunks
+
     files = _iter_supported_files(path)
     index_root = normalized_path(path)
     chunks: list[RagChunk] = []
@@ -87,6 +107,102 @@ def load_documents(
                 )
                 chunk_index += 1
     return chunks
+
+
+def load_hacktricks_documents(
+    path: Path,
+    *,
+    pii_mode: PiiRedactionMode = "off",
+    id_namespace: str = "",
+) -> tuple[list[RagChunk], HackTricksLoadReport]:
+    config = load_hacktricks_config()
+    documents, report = select_hacktricks_documents(path, config=config)
+    index_root = normalized_path(path)
+    chunks: list[RagChunk] = []
+    seen_content_hashes: set[str] = set()
+    for document in documents:
+        text = redact_text(document.text, pii_mode=pii_mode) or ""
+        source = f"{HACKTRICKS_SOURCE_NAME}:{document.relative_path}"
+        document_id = stable_document_id(f"{HACKTRICKS_SOURCE_NAME}:{document.relative_path}")
+        content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        parts = _chunk_markdown_parts(text)
+        security_domains = classify_security_domains(
+            document.relative_path,
+            document.title,
+            text,
+            config,
+        )
+        chunk_index = 0
+        for part in parts:
+            heading_path = part.metadata.get("section_path") or []
+            header = _hacktricks_chunk_header(document.title, heading_path)
+            atomic = part.metadata.get("chunk_type") in {
+                "markdown_code",
+                "markdown_table",
+            }
+            part_chunks = [part.text] if atomic else chunk_text_by_words(part.text)
+            for raw_chunk_text in part_chunks:
+                chunk_text = f"{header}\n\nContent:\n{raw_chunk_text}".strip()
+                if is_low_value_chunk(
+                    chunk_text,
+                    minimum_chars=config.minimum_content_chars,
+                ):
+                    continue
+                chunk_hash = hashlib.sha256(
+                    " ".join(chunk_text.lower().split()).encode("utf-8")
+                ).hexdigest()
+                if chunk_hash in seen_content_hashes:
+                    report.deduplicated_chunks += 1
+                    continue
+                seen_content_hashes.add(chunk_hash)
+                chunk_id = hacktricks_chunk_id(
+                    source_name=HACKTRICKS_SOURCE_NAME,
+                    relative_path=document.relative_path,
+                    heading_path=[str(item) for item in heading_path],
+                    content=chunk_text,
+                    knowledge_base_id=id_namespace or "default",
+                )
+                chunks.append(
+                    RagChunk(
+                        id=chunk_id,
+                        source=source,
+                        title=part.title or document.title,
+                        text=chunk_text,
+                        metadata={
+                            "source": source,
+                            "title": document.title,
+                            "section": part.title,
+                            **part.metadata,
+                            "heading_path": heading_path,
+                            "chunk_index": chunk_index,
+                            "document_id": document_id,
+                            "content_hash": content_hash,
+                            "index_root": index_root,
+                            "source_type": HACKTRICKS_SOURCE_TYPE,
+                            "source_name": HACKTRICKS_SOURCE_NAME,
+                            "source_priority": config.source_priority,
+                            "evidence_type": "security_guidance",
+                            "authority_level": "guidance",
+                            "is_internal": False,
+                            "security_domain": document.security_domain,
+                            "security_domains": security_domains,
+                            "document_path": document.relative_path,
+                            "language": config.language,
+                            "version": report.commit_sha,
+                            "license_review_required": True,
+                            "is_template": False,
+                            "control_areas": _control_areas(
+                                f"{document.security_domain} {chunk_text}"
+                            ),
+                        },
+                    )
+                )
+                report.domain_counts[document.security_domain] = (
+                    report.domain_counts.get(document.security_domain, 0) + 1
+                )
+                chunk_index += 1
+    report.chunk_count = len(chunks)
+    return chunks, report
 
 
 def chunk_markdown_sections(text: str, max_section_words: int = 700) -> list[tuple[str, str]]:
@@ -307,6 +423,14 @@ def document_ids_for_path(path: Path) -> list[str]:
     ]
 
 
+def hacktricks_document_ids_for_path(path: Path) -> list[str]:
+    documents, _ = select_hacktricks_documents(path)
+    return [
+        stable_document_id(f"{HACKTRICKS_SOURCE_NAME}:{document.relative_path}")
+        for document in documents
+    ]
+
+
 def _iter_supported_files(path: Path) -> list[Path]:
     if path.is_file():
         return [path] if path.suffix.lower() in SUPPORTED_EXTENSIONS else []
@@ -358,6 +482,13 @@ def _source_priority(path: Path) -> float:
         "owasp": 0.60,
         "portswigger": 0.55,
     }[source_type]
+
+
+def _hacktricks_chunk_header(title: str, heading_path: list[Any]) -> str:
+    section = " > ".join(str(item) for item in heading_path if item)
+    if section:
+        return f"Title: {title}\nSection: {section}"
+    return f"Title: {title}"
 
 
 def _control_areas(text: str) -> list[str]:

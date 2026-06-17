@@ -43,6 +43,10 @@ security_guidance, past_finding, or assumption.
 Retrieved standards support hypotheses and test methods; they do not prove a
 vulnerability. The application recalculates final confidence from validated
 evidence. State assumptions explicitly.
+HackTricks or other external pentest methodology sources may support test
+ideas, attack scenarios, validation steps, and edge cases only. They are not
+bank policy, system fact, business requirement, or proof that a vulnerability
+exists.
 """
 
 
@@ -271,7 +275,9 @@ def _evidence_context(
     for chunk in state.rag_context:
         source_type = str(chunk.metadata.get("source_type") or "local")
         is_template = bool(chunk.metadata.get("is_template"))
-        if "past-findings" in chunk.source and not is_template:
+        if source_type == "external_pentest_methodology":
+            evidence_type = "security_guidance"
+        elif "past-findings" in chunk.source and not is_template:
             evidence_type = "past_finding"
         elif source_type == "internal" and not is_template:
             evidence_type = "security_policy"

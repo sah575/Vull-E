@@ -1,0 +1,103 @@
+enabled: true
+language: en
+source_priority: 0.50
+minimum_content_chars: 120
+
+allow_path_patterns:
+  - "**/*api*.md"
+  - "**/*auth*.md"
+  - "**/*authorization*.md"
+  - "**/*idor*.md"
+  - "**/*bola*.md"
+  - "**/*business*logic*.md"
+  - "**/*file*upload*.md"
+  - "**/*path*traversal*.md"
+  - "**/*ssrf*.md"
+  - "**/*sql*injection*.md"
+  - "**/*nosql*.md"
+  - "**/*command*injection*.md"
+  - "**/*template*injection*.md"
+  - "**/*xxe*.md"
+  - "**/*xss*.md"
+  - "**/*csrf*.md"
+  - "**/*cors*.md"
+  - "**/*jwt*.md"
+  - "**/*oauth*.md"
+  - "**/*oidc*.md"
+  - "**/*graphql*.md"
+  - "**/*websocket*.md"
+  - "**/*mass*assignment*.md"
+  - "**/*race*.md"
+  - "**/*replay*.md"
+  - "**/*rate*limit*.md"
+  - "**/*request*smuggling*.md"
+  - "**/*deserialization*.md"
+  - "**/*open*redirect*.md"
+  - "**/*http*parameter*pollution*.md"
+  - "**/pentesting-web/**/*.md"
+  - "**/network-services-pentesting/pentesting-web/**/*.md"
+
+exclude_path_patterns:
+  - "**/.git/**"
+  - "**/img/**"
+  - "**/images/**"
+  - "**/assets/**"
+  - "**/binary-exploitation/**"
+  - "**/reversing/**"
+  - "**/forensics/**"
+  - "**/windows-hardening/**"
+  - "**/linux-hardening/**"
+  - "**/linux-unix/**"
+  - "**/windows/**"
+  - "**/active-directory/**"
+  - "**/cloud-security/**"
+  - "**/kubernetes/**"
+  - "**/wireless/**"
+  - "**/*privilege*escalation*.md"
+  - "**/*privesc*.md"
+  - "**/*forensic*.md"
+  - "**/*ctf*.md"
+
+security_domain_mappings:
+  access_control:
+    - authorization
+    - access control
+    - idor
+    - bola
+    - permission
+  authentication:
+    - authentication
+    - login
+    - password
+    - mfa
+    - otp
+  file_upload:
+    - file upload
+    - upload
+    - extension
+    - mime
+    - multipart
+  ssrf:
+    - ssrf
+    - server side request forgery
+    - webhook
+    - callback
+  graphql:
+    - graphql
+    - mutation
+    - resolver
+    - introspection
+  jwt:
+    - jwt
+    - json web token
+  oauth:
+    - oauth
+    - oidc
+    - openid connect
+  race_replay:
+    - race condition
+    - replay
+    - idempotency
+  request_smuggling:
+    - request smuggling
+    - http desync
