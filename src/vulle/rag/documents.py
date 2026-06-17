@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
-from vulle.models import RagChunk
+from vulle.models import RagChunk, RagIndexReport
 from vulle.rag.hacktricks import (
     HACKTRICKS_SOURCE_NAME,
     HACKTRICKS_SOURCE_TYPE,
@@ -20,6 +20,19 @@ from vulle.rag.hacktricks import (
 from vulle.security import PiiRedactionMode, redact_text
 
 SUPPORTED_EXTENSIONS = {".md", ".txt", ".json"}
+DEFAULT_EXCLUDED_DIRS = {
+    ".git",
+    ".venv",
+    "venv",
+    "node_modules",
+    "__pycache__",
+    "dist",
+    "build",
+    "assets",
+    "asset",
+    "img",
+    "images",
+}
 CONTROL_AREA_TERMS = {
     "access_control": {"authorization", "idor", "bola", "role", "permission", "maker", "checker"},
     "authentication": {"authentication", "login", "session", "token", "mfa", "otp", "password"},
@@ -42,38 +55,81 @@ class DocumentPart:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass
+class DocumentLoadOptions:
+    source_name: str = "local"
+    tenant_id: str = "default"
+    environment: str = "preprod"
+    knowledge_base_id: str = "default"
+    index_schema_version: int = 2
+    max_file_size_mb: int = 10
+    max_total_files: int = 10000
+    max_chunks_per_document: int = 500
+    follow_symlinks: bool = False
+
+
+@dataclass
+class DocumentLoadResult:
+    chunks: list[RagChunk]
+    report: RagIndexReport
+
+
 def load_documents(
     path: Path,
     *,
     pii_mode: PiiRedactionMode = "off",
     source_profile: str = "default",
     id_namespace: str = "",
+    options: DocumentLoadOptions | None = None,
 ) -> list[RagChunk]:
     if source_profile == "hacktricks":
         hacktricks_chunks, _ = load_hacktricks_documents(
             path,
             pii_mode=pii_mode,
             id_namespace=id_namespace,
+            options=options,
         )
         return hacktricks_chunks
 
-    files = _iter_supported_files(path)
+    return load_documents_with_report(
+        path,
+        pii_mode=pii_mode,
+        options=options,
+    ).chunks
+
+
+def load_documents_with_report(
+    path: Path,
+    *,
+    pii_mode: PiiRedactionMode = "off",
+    options: DocumentLoadOptions | None = None,
+) -> DocumentLoadResult:
+    options = options or DocumentLoadOptions()
+    files, report = _iter_supported_files_with_report(path, options)
     index_root = normalized_path(path)
     chunks: list[RagChunk] = []
+    seen_chunk_ids: set[str] = set()
     for file_path in files:
-        text = (
-            redact_text(
-                file_path.read_text(encoding="utf-8"),
-                pii_mode=pii_mode,
-            )
-            or ""
+        relative_source = logical_relative_path(file_path, path)
+        raw_text = _read_text(file_path, relative_source, report)
+        if raw_text is None:
+            continue
+        text = redact_text(raw_text, pii_mode=pii_mode) or ""
+        source = relative_source
+        document_id = scoped_document_id(
+            source_name=options.source_name,
+            tenant_id=options.tenant_id,
+            environment=options.environment,
+            knowledge_base_id=options.knowledge_base_id,
+            relative_path=relative_source,
+            index_schema_version=options.index_schema_version,
         )
-        source = normalized_path(file_path)
-        document_id = stable_document_id(source)
         content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
         title = _title_for(file_path, text)
         parts = _document_parts(file_path, text)
         chunk_index = 0
+        document_chunks = 0
+        report.files_accepted += 1
         for part in parts:
             atomic = part.metadata.get("chunk_type") in {
                 "json",
@@ -82,7 +138,27 @@ def load_documents(
             }
             part_chunks = [part.text] if atomic else chunk_text_by_words(part.text)
             for chunk_text in part_chunks:
-                chunk_id = stable_chunk_id(source, chunk_index, chunk_text)
+                if document_chunks >= options.max_chunks_per_document:
+                    report.chunks_truncated += 1
+                    report.warnings.append(
+                        f"Chunk limit reached for {relative_source}; remaining chunks skipped."
+                    )
+                    break
+                heading_path = [str(item) for item in part.metadata.get("section_path", [])]
+                chunk_id = scoped_chunk_id(
+                    document_id=document_id,
+                    heading_path=heading_path,
+                    content=chunk_text,
+                    index_schema_version=options.index_schema_version,
+                )
+                if chunk_id in seen_chunk_ids:
+                    report.duplicate_chunks += 1
+                    continue
+                seen_chunk_ids.add(chunk_id)
+                source_type = _source_type(file_path)
+                report.source_type_distribution[source_type] = (
+                    report.source_type_distribution.get(source_type, 0) + 1
+                )
                 chunks.append(
                     RagChunk(
                         id=chunk_id,
@@ -98,15 +174,19 @@ def load_documents(
                             "document_id": document_id,
                             "content_hash": content_hash,
                             "index_root": index_root,
-                            "source_type": _source_type(file_path),
+                            "source_name": options.source_name,
+                            "source_type": source_type,
                             "source_priority": _source_priority(file_path),
                             "is_template": ".template." in file_path.name,
+                            "index_schema_version": options.index_schema_version,
                             "control_areas": _control_areas(chunk_text),
                         },
                     )
                 )
                 chunk_index += 1
-    return chunks
+                document_chunks += 1
+    report.chunks_created = len(chunks)
+    return DocumentLoadResult(chunks=chunks, report=report)
 
 
 def load_hacktricks_documents(
@@ -114,16 +194,30 @@ def load_hacktricks_documents(
     *,
     pii_mode: PiiRedactionMode = "off",
     id_namespace: str = "",
+    options: DocumentLoadOptions | None = None,
 ) -> tuple[list[RagChunk], HackTricksLoadReport]:
+    options = options or DocumentLoadOptions(source_name=HACKTRICKS_SOURCE_NAME)
     config = load_hacktricks_config()
-    documents, report = select_hacktricks_documents(path, config=config)
+    documents, report = select_hacktricks_documents(
+        path,
+        config=config,
+        max_file_size_mb=options.max_file_size_mb,
+        max_total_files=options.max_total_files,
+    )
     index_root = normalized_path(path)
     chunks: list[RagChunk] = []
     seen_content_hashes: set[str] = set()
     for document in documents:
         text = redact_text(document.text, pii_mode=pii_mode) or ""
         source = f"{HACKTRICKS_SOURCE_NAME}:{document.relative_path}"
-        document_id = stable_document_id(f"{HACKTRICKS_SOURCE_NAME}:{document.relative_path}")
+        document_id = scoped_document_id(
+            source_name=HACKTRICKS_SOURCE_NAME,
+            tenant_id=options.tenant_id,
+            environment=options.environment,
+            knowledge_base_id=id_namespace or options.knowledge_base_id,
+            relative_path=document.relative_path,
+            index_schema_version=options.index_schema_version,
+        )
         content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
         parts = _chunk_markdown_parts(text)
         security_domains = classify_security_domains(
@@ -161,6 +255,9 @@ def load_hacktricks_documents(
                     heading_path=[str(item) for item in heading_path],
                     content=chunk_text,
                     knowledge_base_id=id_namespace or "default",
+                    tenant_id=options.tenant_id,
+                    environment=options.environment,
+                    index_schema_version=options.index_schema_version,
                 )
                 chunks.append(
                     RagChunk(
@@ -191,6 +288,7 @@ def load_hacktricks_documents(
                             "version": report.commit_sha,
                             "license_review_required": True,
                             "is_template": False,
+                            "index_schema_version": options.index_schema_version,
                             "control_areas": _control_areas(
                                 f"{document.security_domain} {chunk_text}"
                             ),
@@ -416,29 +514,206 @@ def stable_document_id(source: str) -> str:
     return str(uuid5(NAMESPACE_URL, f"vulle-document:{source}"))
 
 
-def document_ids_for_path(path: Path) -> list[str]:
+def scoped_document_id(
+    *,
+    source_name: str,
+    tenant_id: str,
+    environment: str,
+    knowledge_base_id: str,
+    relative_path: str,
+    index_schema_version: int,
+) -> str:
+    identity = "|".join(
+        [
+            str(index_schema_version),
+            source_name,
+            tenant_id,
+            environment,
+            knowledge_base_id,
+            normalize_logical_path(relative_path),
+        ]
+    )
+    return str(uuid5(NAMESPACE_URL, f"vulle-document:{identity}"))
+
+
+def scoped_chunk_id(
+    *,
+    document_id: str,
+    heading_path: list[str],
+    content: str,
+    index_schema_version: int,
+) -> str:
+    content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    identity = "|".join(
+        [
+            str(index_schema_version),
+            document_id,
+            " > ".join(heading_path),
+            content_hash,
+        ]
+    )
+    return str(uuid5(NAMESPACE_URL, f"vulle-chunk:{identity}"))
+
+
+def document_ids_for_path(
+    path: Path,
+    options: DocumentLoadOptions | None = None,
+) -> list[str]:
+    if options is not None:
+        files = _iter_supported_files_with_report(path, options)[0]
+        return [
+            scoped_document_id(
+                source_name=options.source_name,
+                tenant_id=options.tenant_id,
+                environment=options.environment,
+                knowledge_base_id=options.knowledge_base_id,
+                relative_path=logical_relative_path(file_path, path),
+                index_schema_version=options.index_schema_version,
+            )
+            for file_path in files
+        ]
     return [
         stable_document_id(normalized_path(file_path))
         for file_path in _iter_supported_files(path)
     ]
 
 
-def hacktricks_document_ids_for_path(path: Path) -> list[str]:
-    documents, _ = select_hacktricks_documents(path)
+def hacktricks_document_ids_for_path(
+    path: Path,
+    options: DocumentLoadOptions | None = None,
+) -> list[str]:
+    options = options or DocumentLoadOptions(source_name=HACKTRICKS_SOURCE_NAME)
+    documents, _ = select_hacktricks_documents(
+        path,
+        max_file_size_mb=options.max_file_size_mb,
+        max_total_files=options.max_total_files,
+    )
     return [
-        stable_document_id(f"{HACKTRICKS_SOURCE_NAME}:{document.relative_path}")
+        scoped_document_id(
+            source_name=HACKTRICKS_SOURCE_NAME,
+            tenant_id=options.tenant_id,
+            environment=options.environment,
+            knowledge_base_id=options.knowledge_base_id,
+            relative_path=document.relative_path,
+            index_schema_version=options.index_schema_version,
+        )
         for document in documents
     ]
 
 
 def _iter_supported_files(path: Path) -> list[Path]:
+    return _iter_supported_files_with_report(path, DocumentLoadOptions())[0]
+
+
+def _iter_supported_files_with_report(
+    path: Path,
+    options: DocumentLoadOptions,
+) -> tuple[list[Path], RagIndexReport]:
+    report = RagIndexReport()
+    root = path if path.is_dir() else path.parent
+    try:
+        resolved_root = root.resolve()
+    except OSError as exc:
+        report.errors.append(f"Index root could not be resolved: {exc.__class__.__name__}")
+        return [], report
     if path.is_file():
-        return [path] if path.suffix.lower() in SUPPORTED_EXTENSIONS else []
-    return sorted(
-        item
-        for item in path.rglob("*")
-        if item.is_file() and item.suffix.lower() in SUPPORTED_EXTENSIONS
-    )
+        candidates = [path]
+    else:
+        candidates = [
+            item
+            for item in path.rglob("*")
+            if not _has_excluded_dir(item, path)
+        ]
+    files: list[Path] = []
+    for item in sorted(candidates):
+        if item.is_dir():
+            continue
+        report.files_scanned += 1
+        if item.is_symlink() and not options.follow_symlinks:
+            report.files_skipped += 1
+            report.warnings.append(f"Skipped symlink: {logical_relative_path(item, root)}")
+            continue
+        try:
+            resolved_file = item.resolve()
+        except OSError as exc:
+            report.files_failed += 1
+            report.warnings.append(
+                f"Skipped unresolved path {logical_relative_path(item, root)}: "
+                f"{exc.__class__.__name__}"
+            )
+            continue
+        if not _is_relative_to(resolved_file, resolved_root):
+            report.files_skipped += 1
+            report.warnings.append(
+                f"Skipped path outside index root: {logical_relative_path(item, root)}"
+            )
+            continue
+        if item.suffix.lower() not in SUPPORTED_EXTENSIONS:
+            report.files_skipped += 1
+            continue
+        try:
+            size = item.stat().st_size
+        except OSError as exc:
+            report.files_failed += 1
+            report.warnings.append(
+                f"Skipped unreadable file {logical_relative_path(item, root)}: "
+                f"{exc.__class__.__name__}"
+            )
+            continue
+        if size > options.max_file_size_mb * 1024 * 1024:
+            report.files_skipped += 1
+            report.warnings.append(
+                f"Skipped oversized file: {logical_relative_path(item, root)}"
+            )
+            continue
+        files.append(item)
+        if len(files) > options.max_total_files:
+            report.errors.append(
+                f"Maximum file count exceeded: {options.max_total_files}"
+            )
+            return files[: options.max_total_files], report
+    return files, report
+
+
+def _read_text(path: Path, relative_path: str, report: RagIndexReport) -> str | None:
+    try:
+        return path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        try:
+            return path.read_text(encoding="utf-8-sig")
+        except UnicodeDecodeError:
+            report.files_failed += 1
+            report.warnings.append(f"Skipped non-UTF-8 file: {relative_path}")
+            return None
+
+
+def logical_relative_path(path: Path, root: Path) -> str:
+    base = root if root.is_dir() else root.parent
+    try:
+        value = path.resolve().relative_to(base.resolve()).as_posix()
+    except (OSError, ValueError):
+        value = path.as_posix()
+    return normalize_logical_path(value)
+
+
+def normalize_logical_path(value: str) -> str:
+    return value.replace("\\", "/").lstrip("/")
+
+
+def _has_excluded_dir(path: Path, root: Path) -> bool:
+    try:
+        parts = path.relative_to(root).parts
+    except ValueError:
+        parts = path.parts
+    return any(part in DEFAULT_EXCLUDED_DIRS for part in parts[:-1])
+
+
+def _is_relative_to(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return False
+    return True
 
 
 def normalized_path(path: Path) -> str:

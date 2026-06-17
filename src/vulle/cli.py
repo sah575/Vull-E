@@ -70,11 +70,18 @@ def rag_index(
         False,
         help="Replace the complete index root and remove stale/deleted documents.",
     ),
+    dry_run: bool = typer.Option(
+        False,
+        help="Preview indexing without embedding, upsert, or delete operations.",
+    ),
+    output: Path | None = None,
 ) -> None:
     """Index markdown, text, or JSON knowledge documents into Qdrant."""
     settings = get_settings()
-    count = RagService(settings).index_path(path, sync=sync)
-    console.print(f"[green]Indexed {count} chunk(s) into {settings.qdrant_collection}.[/green]")
+    report = RagService(settings).index_path_report(path, sync=sync, dry_run=dry_run)
+    _print_index_summary(report.model_dump())
+    if output:
+        _emit_json(report.model_dump(), output)
 
 
 @app.command("rag-index-hacktricks")
@@ -84,6 +91,11 @@ def rag_index_hacktricks(
         False,
         help="Replace the complete HackTricks index root and remove stale/deleted documents.",
     ),
+    dry_run: bool = typer.Option(
+        False,
+        help="Preview indexing without embedding, upsert, or delete operations.",
+    ),
+    output: Path | None = None,
 ) -> None:
     """Index selected AppSec/Web/API HackTricks markdown documents into Qdrant."""
     settings = get_settings()
@@ -92,13 +104,17 @@ def rag_index_hacktricks(
             f"HackTricks path does not exist or is not a directory: {path}",
             param_hint="PATH",
         )
-    report = RagService(settings).index_hacktricks(path, sync=sync)
+    report = RagService(settings).index_hacktricks_report(path, sync=sync, dry_run=dry_run)
     console.print(
         "[yellow]HackTricks is external testing guidance, not bank policy or "
         "vulnerability evidence. Review current license terms before internal "
         "redistribution.[/yellow]"
     )
-    _emit_json(report)
+    if output:
+        _print_index_summary(report.model_dump())
+        _emit_json(report.model_dump(), output)
+    else:
+        _emit_json(report.model_dump())
 
 
 @app.command("rag-search")
@@ -188,6 +204,22 @@ def _emit_json(payload: Any, output: Path | None = None) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(f"{rendered}\n", encoding="utf-8")
     console.print(f"[green]Wrote output to {output}.[/green]")
+
+
+def _print_index_summary(report: dict[str, Any]) -> None:
+    console.print(f"Files scanned: {report.get('files_scanned', 0)}")
+    console.print(f"Files accepted: {report.get('files_accepted', 0)}")
+    console.print(f"Files skipped: {report.get('files_skipped', 0)}")
+    console.print(f"Files failed: {report.get('files_failed', 0)}")
+    console.print(f"Chunks created: {report.get('chunks_created', 0)}")
+    console.print(f"Chunks upserted: {report.get('chunks_upserted', 0)}")
+    console.print(f"Embedding batches: {report.get('embedding_batches', 0)}")
+    console.print(f"Qdrant batches: {report.get('qdrant_batches', 0)}")
+    console.print(f"Retries: {report.get('retry_count', 0)}")
+    console.print(f"Warnings: {len(report.get('warnings', []))}")
+    if report.get("commit_sha"):
+        console.print(f"Commit SHA: {report['commit_sha']}")
+    console.print(f"Dry run: {'yes' if report.get('dry_run') else 'no'}")
 
 
 if __name__ == "__main__":

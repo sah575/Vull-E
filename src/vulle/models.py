@@ -41,6 +41,28 @@ class RagSource(BaseModel):
     chunk_id: str | None = None
 
 
+class RagIndexReport(BaseModel):
+    files_scanned: int = 0
+    files_accepted: int = 0
+    files_skipped: int = 0
+    files_failed: int = 0
+    chunks_created: int = 0
+    chunks_upserted: int = 0
+    chunks_failed: int = 0
+    chunks_deleted: int = 0
+    chunks_truncated: int = 0
+    duplicate_chunks: int = 0
+    embedding_batches: int = 0
+    qdrant_batches: int = 0
+    retry_count: int = 0
+    source_type_distribution: dict[str, int] = Field(default_factory=dict)
+    security_domain_distribution: dict[str, int] = Field(default_factory=dict)
+    commit_sha: str | None = None
+    warnings: list[str] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)
+    dry_run: bool = False
+
+
 class SecurityFacet(BaseModel):
     type: str
     terms: list[str] = Field(default_factory=list)

@@ -3,15 +3,17 @@
 Vull-E is an agentic security-analysis prototype for pre-deployment review.
 
 ```text
-V   V  U   U  L      L       EEEEE
-V   V  U   U  L      L       E
-V   V  U   U  L      L       EEEE
- V V   U   U  L      L       E
-  V     UUU   LLLLL  LLLLL   EEEEE
+██╗   ██╗██╗   ██╗██╗     ██╗          ███████╗
+██║   ██║██║   ██║██║     ██║          ██╔════╝
+██║   ██║██║   ██║██║     ██║  █████╗  █████╗
+╚██╗ ██╔╝██║   ██║██║     ██║  ╚════╝  ██╔══╝
+ ╚████╔╝ ╚██████╔╝███████╗███████╗     ███████╗
+  ╚═══╝   ╚═════╝ ╚══════╝╚══════╝     ╚══════╝
 
 PRE-DEPLOYMENT SECURITY INTELLIGENCE
-JIRA + CONFLUENCE > RAG > RISK HYPOTHESES > TEST PLANS
-LOCAL-FIRST | EVIDENCE-BOUND | HUMAN-REVIEWED
+LOCAL-FIRST APPSEC RAG | JIRA + CONFLUENCE | EVIDENCE-BOUND
+[ JIRA+CONF ] => [ RAG ] => [ RISKS ] => [ TESTS ]
+AUTHORIZED TESTING | GUIDANCE-AWARE | HUMAN-REVIEWED
 ```
 
 The first milestone analyzes Jira issues with a local OpenAI-compatible model
@@ -74,15 +76,30 @@ EMBEDDING_BASE_URL=http://127.0.0.1:8000/v1
 EMBEDDING_API_KEY=local-not-needed
 EMBEDDING_MODEL=bge-m3
 EMBEDDING_DIMENSIONS=1024
+EMBEDDING_BATCH_SIZE=32
 
 QDRANT_URL=http://127.0.0.1:6333
+QDRANT_API_KEY=
 QDRANT_COLLECTION=vulle_knowledge
+RAG_TENANT_ID=
 RAG_ENVIRONMENT=preprod
+RAG_KNOWLEDGE_BASE_ID=
+RAG_TOP_K=6
+RAG_MAX_CONTEXT_CHARS=8000
+RAG_MAX_CHUNKS_PER_SOURCE=3
 
 RAG_CANDIDATE_MULTIPLIER=4
 RAG_DENSE_WEIGHT=0.65
 RAG_LEXICAL_WEIGHT=0.20
 RAG_SOURCE_WEIGHT=0.15
+QDRANT_UPSERT_BATCH_SIZE=128
+RAG_INDEX_RETRY_COUNT=3
+RAG_INDEX_RETRY_BASE_DELAY_SECONDS=1
+RAG_MAX_FILE_SIZE_MB=10
+RAG_MAX_TOTAL_FILES=10000
+RAG_MAX_CHUNKS_PER_DOCUMENT=500
+RAG_FOLLOW_SYMLINKS=false
+RAG_INDEX_SCHEMA_VERSION=2
 ```
 
 The LLM server must expose an OpenAI-compatible `/chat/completions` API.
@@ -256,6 +273,38 @@ Search the knowledge base:
 ```bash
 vulle rag-search "maker checker document approval"
 ```
+
+Preview an index without contacting embedding or Qdrant services:
+
+```bash
+vulle rag-index docs/knowledge --dry-run
+vulle rag-index-hacktricks /path/to/hacktricks --dry-run --output .vulle/reports/hacktricks-index.json
+```
+
+Large index runs use bounded embedding and Qdrant batches:
+
+```env
+EMBEDDING_BATCH_SIZE=32
+QDRANT_UPSERT_BATCH_SIZE=128
+RAG_INDEX_RETRY_COUNT=3
+RAG_INDEX_RETRY_BASE_DELAY_SECONDS=1
+RAG_MAX_FILE_SIZE_MB=10
+RAG_MAX_TOTAL_FILES=10000
+RAG_MAX_CHUNKS_PER_DOCUMENT=500
+RAG_FOLLOW_SYMLINKS=false
+RAG_INDEX_SCHEMA_VERSION=2
+```
+
+These defaults are starting points. Tune them in the bank environment according
+to the embedding server, GPU capacity, network behavior, and Qdrant capacity.
+Indexing skips symlinks by default, rejects files that resolve outside the
+index root, skips oversized or non-UTF-8 files with warnings, excludes common
+build/cache/asset directories, and refuses destructive sync deletes when no
+source files were accepted. Deterministic document and chunk IDs include the
+tenant, environment, knowledge base, root-relative path, heading path, content
+hash, and index schema version. Because `RAG_INDEX_SCHEMA_VERSION=2` changes ID
+identity, recreate older collections or run a controlled `--sync` after
+validating a dry run.
 
 ## HackTricks RAG Source
 

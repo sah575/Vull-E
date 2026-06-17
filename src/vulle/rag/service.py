@@ -1,17 +1,21 @@
 import json
 import re
 from pathlib import Path
+from typing import Any, Protocol
 
-from vulle.config import Settings
-from vulle.models import ConfluencePage, JiraIssue, RagChunk, SecurityFacet
+from vulle.config import Settings, rag_scope
+from vulle.models import ConfluencePage, JiraIssue, RagChunk, RagIndexReport, SecurityFacet
 from vulle.rag.documents import (
+    DocumentLoadOptions,
     document_ids_for_path,
     hacktricks_document_ids_for_path,
-    load_documents,
+    load_documents_with_report,
     load_hacktricks_documents,
     normalized_path,
 )
 from vulle.rag.embeddings import EmbeddingClient
+from vulle.rag.hacktricks import HACKTRICKS_SOURCE_NAME, HACKTRICKS_SOURCE_TYPE
+from vulle.rag.indexing import RetryPolicy, batch_count, batched, run_with_retry
 from vulle.rag.qdrant_store import QdrantRagStore
 from vulle.security import PiiRedactionMode, redact_data, redact_text
 
@@ -79,51 +83,274 @@ FACET_TERMS = {
 }
 
 
+class EmbeddingLike(Protocol):
+    def embed_texts(self, texts: list[str]) -> list[list[float]]: ...
+
+    def embed_query(self, text: str) -> list[float]: ...
+
+
+class RagStoreLike(Protocol):
+    def sync_index_root(
+        self,
+        index_root: str,
+        chunks: list[RagChunk],
+        vectors: list[list[float]],
+        *,
+        source_name: str | None = None,
+        source_type: str | None = None,
+    ) -> None: ...
+
+    def delete_documents(
+        self,
+        document_ids: list[str],
+        *,
+        source_name: str | None = None,
+        source_type: str | None = None,
+    ) -> None: ...
+
+    def upsert_chunks(self, chunks: list[RagChunk], vectors: list[list[float]]) -> None: ...
+
+    def search(self, vector: list[float], limit: int) -> list[RagChunk]: ...
+
+
 class RagService:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
-        self._embeddings = EmbeddingClient(settings)
-        self._store = QdrantRagStore(settings)
+        self._embeddings: EmbeddingLike | None = None
+        self._store: RagStoreLike | None = None
+
+    def _embedding_client(self) -> EmbeddingLike:
+        if getattr(self, "_embeddings", None) is None:
+            self._embeddings = EmbeddingClient(self._settings)
+        assert self._embeddings is not None
+        return self._embeddings
+
+    def _rag_store(self) -> RagStoreLike:
+        if getattr(self, "_store", None) is None:
+            self._store = QdrantRagStore(self._settings)
+        assert self._store is not None
+        return self._store
 
     def index_path(self, path: Path, *, sync: bool = False) -> int:
-        chunks = load_documents(path, pii_mode=self._settings.pii_redaction_mode)
-        vectors = self._embeddings.embed_texts([chunk.text for chunk in chunks])
-        if sync:
-            self._store.sync_index_root(normalized_path(path), chunks, vectors)
-        else:
-            self._store.replace_documents(
-                chunks,
-                vectors,
-                document_ids=document_ids_for_path(path),
-            )
-        return len(chunks)
+        return self.index_path_report(path, sync=sync).chunks_created
+
+    def index_path_report(
+        self,
+        path: Path,
+        *,
+        sync: bool = False,
+        dry_run: bool = False,
+    ) -> RagIndexReport:
+        options = self._load_options(source_name="local")
+        result = load_documents_with_report(
+            path,
+            pii_mode=self._settings.pii_redaction_mode,
+            options=options,
+        )
+        document_ids = document_ids_for_path(path, options)
+        return self._index_chunks(
+            path,
+            result.chunks,
+            result.report,
+            sync=sync,
+            dry_run=dry_run,
+            document_ids=document_ids,
+            source_name="local",
+            source_type=None,
+        )
 
     def index_hacktricks(self, path: Path, *, sync: bool = False) -> dict[str, object]:
+        return self.index_hacktricks_report(path, sync=sync).model_dump()
+
+    def index_hacktricks_report(
+        self,
+        path: Path,
+        *,
+        sync: bool = False,
+        dry_run: bool = False,
+    ) -> RagIndexReport:
+        options = self._load_options(source_name=HACKTRICKS_SOURCE_NAME)
         chunks, report = load_hacktricks_documents(
             path,
             pii_mode=self._settings.pii_redaction_mode,
             id_namespace=self._settings.rag_knowledge_base_id
             or f"{self._settings.qdrant_collection}:{self._settings.rag_environment}",
+            options=options,
         )
-        vectors = self._embeddings.embed_texts([chunk.text for chunk in chunks])
-        if sync:
-            self._store.sync_index_root(normalized_path(path), chunks, vectors)
-        else:
-            self._store.replace_documents(
-                chunks,
-                vectors,
-                document_ids=hacktricks_document_ids_for_path(path),
+        index_report = RagIndexReport(
+            files_scanned=report.scanned_files,
+            files_accepted=report.accepted_files,
+            files_skipped=report.excluded_files,
+            chunks_created=report.chunk_count,
+            duplicate_chunks=report.deduplicated_chunks,
+            security_domain_distribution=report.domain_counts,
+            commit_sha=report.commit_sha,
+            warnings=[
+                *report.warnings,
+                "HackTricks license review is required before internal redistribution.",
+            ],
+        )
+        for chunk in chunks:
+            _increment(
+                index_report.source_type_distribution,
+                str(chunk.metadata.get("source_type") or "unknown"),
             )
-        return {
-            "scanned_files": report.scanned_files,
-            "accepted_files": report.accepted_files,
-            "excluded_files": report.excluded_files,
-            "chunk_count": report.chunk_count,
-            "deduplicated_chunks": report.deduplicated_chunks,
-            "domain_counts": report.domain_counts,
-            "commit_sha": report.commit_sha,
-            "warnings": report.warnings,
-        }
+        document_ids = hacktricks_document_ids_for_path(path, options)
+        return self._index_chunks(
+            path,
+            chunks,
+            index_report,
+            sync=sync,
+            dry_run=dry_run,
+            document_ids=document_ids,
+            source_name=HACKTRICKS_SOURCE_NAME,
+            source_type=HACKTRICKS_SOURCE_TYPE,
+        )
+
+    def _load_options(self, *, source_name: str) -> DocumentLoadOptions:
+        scope = rag_scope(self._settings)
+        return DocumentLoadOptions(
+            source_name=source_name,
+            tenant_id=scope["tenant_id"],
+            environment=scope["environment"],
+            knowledge_base_id=scope["knowledge_base_id"],
+            index_schema_version=self._settings.rag_index_schema_version,
+            max_file_size_mb=self._settings.rag_max_file_size_mb,
+            max_total_files=self._settings.rag_max_total_files,
+            max_chunks_per_document=self._settings.rag_max_chunks_per_document,
+            follow_symlinks=self._settings.rag_follow_symlinks,
+        )
+
+    def _index_chunks(
+        self,
+        path: Path,
+        chunks: list[RagChunk],
+        report: RagIndexReport,
+        *,
+        sync: bool,
+        dry_run: bool,
+        document_ids: list[str],
+        source_name: str | None,
+        source_type: str | None,
+    ) -> RagIndexReport:
+        report.dry_run = dry_run
+        report.chunks_created = len(chunks)
+        report.embedding_batches = batch_count(
+            len(chunks),
+            self._settings.embedding_batch_size,
+        )
+        report.qdrant_batches = _estimated_nested_batches(
+            len(chunks),
+            self._settings.embedding_batch_size,
+            self._settings.qdrant_upsert_batch_size,
+        )
+        if dry_run:
+            return report
+        if sync and report.files_accepted == 0:
+            report.warnings.append(
+                "Sync delete skipped because no source files were accepted."
+            )
+            sync = False
+        if sync:
+            self._rag_store().sync_index_root(
+                normalized_path(path),
+                [],
+                [],
+                source_name=source_name,
+                source_type=source_type,
+            )
+        elif document_ids:
+            self._rag_store().delete_documents(
+                document_ids,
+                source_name=source_name,
+                source_type=source_type,
+            )
+
+        retry_policy = RetryPolicy(
+            attempts=self._settings.rag_index_retry_count,
+            base_delay_seconds=self._settings.rag_index_retry_base_delay_seconds,
+        )
+        total_embedding_batches = report.embedding_batches
+        report.qdrant_batches = 0
+        for batch_number, chunk_batch in enumerate(
+            batched(chunks, self._settings.embedding_batch_size),
+            start=1,
+        ):
+            def embed_batch(batch: list[RagChunk] = chunk_batch) -> list[list[float]]:
+                return self._embedding_client().embed_texts(
+                    [chunk.text for chunk in batch]
+                )
+
+            try:
+                vectors, retries = run_with_retry(
+                    embed_batch,
+                    operation_name="embedding",
+                    batch_number=batch_number,
+                    total_batches=total_embedding_batches,
+                    policy=retry_policy,
+                )
+            except Exception as exc:
+                report.chunks_failed += len(chunk_batch)
+                report.errors.append(str(exc))
+                raise
+            report.retry_count += retries
+            if len(vectors) != len(chunk_batch):
+                report.chunks_failed += len(chunk_batch)
+                raise ValueError(
+                    "Embedding response count mismatch for batch "
+                    f"{batch_number}/{total_embedding_batches}: "
+                    f"expected={len(chunk_batch)}, actual={len(vectors)}"
+                )
+            self._upsert_vector_batches(
+                chunk_batch,
+                vectors,
+                report,
+                retry_policy,
+                extra={
+                    "embedding_batch_number": batch_number,
+                    "embedding_total_batches": total_embedding_batches,
+                },
+            )
+        return report
+
+    def _upsert_vector_batches(
+        self,
+        chunks: list[RagChunk],
+        vectors: list[list[float]],
+        report: RagIndexReport,
+        retry_policy: RetryPolicy,
+        *,
+        extra: dict[str, Any],
+    ) -> None:
+        total = batch_count(len(chunks), self._settings.qdrant_upsert_batch_size)
+        for batch_number, index_batch in enumerate(
+            batched(list(range(len(chunks))), self._settings.qdrant_upsert_batch_size),
+            start=1,
+        ):
+            chunk_batch = [chunks[index] for index in index_batch]
+            vector_batch = [vectors[index] for index in index_batch]
+
+            def upsert_batch(
+                cb: list[RagChunk] = chunk_batch,
+                vb: list[list[float]] = vector_batch,
+            ) -> None:
+                self._rag_store().upsert_chunks(cb, vb)
+
+            try:
+                _, retries = run_with_retry(
+                    upsert_batch,
+                    operation_name="qdrant_upsert",
+                    batch_number=batch_number,
+                    total_batches=total,
+                    policy=retry_policy,
+                )
+            except Exception as exc:
+                report.chunks_failed += len(chunk_batch)
+                report.errors.append(f"{exc}; context={extra}")
+                raise
+            report.retry_count += retries
+            report.qdrant_batches += 1
+            report.chunks_upserted += len(chunk_batch)
 
     def search(self, query: str, limit: int | None = None) -> list[RagChunk]:
         redacted_query = (
@@ -135,8 +362,8 @@ class RagService:
         )
         result_limit = limit or self._settings.rag_top_k
         candidate_limit = result_limit * self._settings.rag_candidate_multiplier
-        vector = self._embeddings.embed_query(redacted_query)
-        candidates = self._store.search(vector, candidate_limit)
+        vector = self._embedding_client().embed_query(redacted_query)
+        candidates = self._rag_store().search(vector, candidate_limit)
         return rerank_chunks(
             redacted_query,
             candidates,
@@ -399,3 +626,18 @@ def _domain_score(query_domains: set[str], chunk: RagChunk) -> float:
     if source_type == "external_pentest_methodology":
         return 0.03
     return 0.02
+
+
+def _increment(values: dict[str, int], key: str) -> None:
+    values[key] = values.get(key, 0) + 1
+
+
+def _estimated_nested_batches(
+    item_count: int,
+    outer_batch_size: int,
+    inner_batch_size: int,
+) -> int:
+    total = 0
+    for batch in batched(list(range(item_count)), outer_batch_size):
+        total += batch_count(len(batch), inner_batch_size)
+    return total

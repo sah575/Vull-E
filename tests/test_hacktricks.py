@@ -157,14 +157,26 @@ def test_index_hacktricks_uses_replace_or_sync_without_real_services() -> None:
 
     class FakeStore:
         def __init__(self) -> None:
-            self.replaced = False
+            self.deleted = False
             self.synced = False
+            self.upserted = False
 
-        def replace_documents(self, chunks, vectors, *, document_ids) -> None:
-            self.replaced = bool(chunks)
+        def delete_documents(self, document_ids, *, source_name=None, source_type=None) -> None:
+            self.deleted = bool(document_ids and source_name and source_type)
 
-        def sync_index_root(self, index_root, chunks, vectors) -> None:
-            self.synced = bool(index_root and chunks)
+        def sync_index_root(
+            self,
+            index_root,
+            chunks,
+            vectors,
+            *,
+            source_name=None,
+            source_type=None,
+        ) -> None:
+            self.synced = bool(index_root and source_name and source_type)
+
+        def upsert_chunks(self, chunks, vectors) -> None:
+            self.upserted = bool(chunks and vectors)
 
     service = object.__new__(RagService)
     service._settings = Settings(
@@ -178,10 +190,11 @@ def test_index_hacktricks_uses_replace_or_sync_without_real_services() -> None:
     replace_report = service.index_hacktricks(FIXTURES, sync=False)
     sync_report = service.index_hacktricks(FIXTURES, sync=True)
 
-    assert store.replaced
+    assert store.deleted
+    assert store.upserted
     assert store.synced
-    assert replace_report["accepted_files"] == 4
-    assert sync_report["chunk_count"]
+    assert replace_report["files_accepted"] == 4
+    assert sync_report["chunks_created"]
 
 
 def test_internal_policy_reranks_before_hacktricks_guidance() -> None:

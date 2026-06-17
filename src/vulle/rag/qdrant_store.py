@@ -68,6 +68,8 @@ class QdrantRagStore:
         vectors: list[list[float]],
         *,
         document_ids: list[str] | None = None,
+        source_name: str | None = None,
+        source_type: str | None = None,
     ) -> None:
         document_ids = document_ids or sorted(
             {
@@ -77,7 +79,11 @@ class QdrantRagStore:
             }
         )
         if document_ids:
-            self.delete_documents(document_ids)
+            self.delete_documents(
+                document_ids,
+                source_name=source_name,
+                source_type=source_type,
+            )
         self.upsert_chunks(chunks, vectors)
 
     def sync_index_root(
@@ -85,22 +91,39 @@ class QdrantRagStore:
         index_root: str,
         chunks: list[RagChunk],
         vectors: list[list[float]],
+        *,
+        source_name: str | None = None,
+        source_type: str | None = None,
     ) -> None:
         self.ensure_collection(ensure_payload_indexes=True)
         self._client.delete(
             collection_name=self._settings.qdrant_collection,
-            points_selector=self._filter(index_root=index_root),
+            points_selector=self._filter(
+                index_root=index_root,
+                source_name=source_name,
+                source_type=source_type,
+            ),
             wait=True,
         )
         self.upsert_chunks(chunks, vectors)
 
-    def delete_documents(self, document_ids: list[str]) -> None:
+    def delete_documents(
+        self,
+        document_ids: list[str],
+        *,
+        source_name: str | None = None,
+        source_type: str | None = None,
+    ) -> None:
         if not document_ids:
             return
         self.ensure_collection(ensure_payload_indexes=True)
         self._client.delete(
             collection_name=self._settings.qdrant_collection,
-            points_selector=self._filter(document_ids=document_ids),
+            points_selector=self._filter(
+                document_ids=document_ids,
+                source_name=source_name,
+                source_type=source_type,
+            ),
             wait=True,
         )
 
@@ -133,6 +156,8 @@ class QdrantRagStore:
         *,
         document_ids: list[str] | None = None,
         index_root: str | None = None,
+        source_name: str | None = None,
+        source_type: str | None = None,
     ) -> qmodels.Filter:
         conditions: list[Any] = [
             qmodels.FieldCondition(
@@ -155,6 +180,20 @@ class QdrantRagStore:
                     match=qmodels.MatchValue(value=index_root),
                 )
             )
+        if source_name:
+            conditions.append(
+                qmodels.FieldCondition(
+                    key="source_name",
+                    match=qmodels.MatchValue(value=source_name),
+                )
+            )
+        if source_type:
+            conditions.append(
+                qmodels.FieldCondition(
+                    key="source_type",
+                    match=qmodels.MatchValue(value=source_type),
+                )
+            )
         return qmodels.Filter(must=conditions)
 
     def _ensure_payload_indexes(self) -> None:
@@ -166,6 +205,8 @@ class QdrantRagStore:
             "knowledge_base_id",
             "document_id",
             "index_root",
+            "source_name",
+            "source_type",
         ):
             self._client.create_payload_index(
                 collection_name=self._settings.qdrant_collection,

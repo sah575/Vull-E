@@ -78,6 +78,29 @@ def test_sync_deletes_only_scoped_index_root() -> None:
     assert conditions["index_root"] == "docs/knowledge"
 
 
+def test_sync_can_be_limited_to_source_name_and_type() -> None:
+    store, client = _store()
+
+    store.sync_index_root(
+        "hacktricks-root",
+        [],
+        [],
+        source_name="hacktricks",
+        source_type="external_pentest_methodology",
+    )
+
+    delete_filter = client.deleted[0]["points_selector"]
+    conditions = {
+        condition.key: condition.match.value
+        for condition in delete_filter.must
+    }
+    assert conditions["tenant_id"] == "bank-a"
+    assert conditions["environment"] == "preprod"
+    assert conditions["knowledge_base_id"] == "bank-a-security-v1"
+    assert conditions["source_name"] == "hacktricks"
+    assert conditions["source_type"] == "external_pentest_methodology"
+
+
 def test_replace_documents_deletes_previous_document_chunks() -> None:
     store, client = _store()
     chunk = RagChunk(

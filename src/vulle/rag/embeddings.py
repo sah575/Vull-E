@@ -43,6 +43,11 @@ class EmbeddingClient:
             raise ServiceResponseFormatError(
                 "Embedding response is missing data[].embedding."
             ) from exc
+        if len(vectors) != len(texts):
+            raise ServiceResponseFormatError(
+                "Embedding response count mismatch: "
+                f"expected={len(texts)}, actual={len(vectors)}."
+            )
         for vector in vectors:
             if len(vector) != self._settings.embedding_dimensions:
                 raise ServiceCompatibilityError(

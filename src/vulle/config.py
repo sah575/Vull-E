@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     embedding_api_key: str = "local-not-needed"
     embedding_model: str = "bge-m3"
     embedding_dimensions: int = Field(default=1024, gt=0)
+    embedding_batch_size: int = Field(default=32, gt=0, le=4096)
 
     qdrant_url: str = "http://127.0.0.1:6333"
     qdrant_api_key: str | None = None
@@ -51,6 +52,14 @@ class Settings(BaseSettings):
     rag_dense_weight: float = Field(default=0.65, ge=0.0, le=1.0)
     rag_lexical_weight: float = Field(default=0.20, ge=0.0, le=1.0)
     rag_source_weight: float = Field(default=0.15, ge=0.0, le=1.0)
+    qdrant_upsert_batch_size: int = Field(default=128, gt=0, le=10000)
+    rag_index_retry_count: int = Field(default=3, ge=0, le=10)
+    rag_index_retry_base_delay_seconds: float = Field(default=1.0, ge=0.0, le=60.0)
+    rag_max_file_size_mb: int = Field(default=10, gt=0, le=1024)
+    rag_max_total_files: int = Field(default=10000, gt=0, le=1000000)
+    rag_max_chunks_per_document: int = Field(default=500, gt=0, le=100000)
+    rag_follow_symlinks: bool = False
+    rag_index_schema_version: int = Field(default=2, gt=0)
 
 
 @lru_cache

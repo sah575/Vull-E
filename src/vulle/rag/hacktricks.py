@@ -157,6 +157,8 @@ def select_hacktricks_documents(
     root: Path,
     *,
     config: HackTricksConfig | None = None,
+    max_file_size_mb: int = 10,
+    max_total_files: int = 10000,
 ) -> tuple[list[HackTricksDocument], HackTricksLoadReport]:
     config = config or load_hacktricks_config()
     report = HackTricksLoadReport(commit_sha=git_commit_sha(root))
@@ -172,10 +174,26 @@ def select_hacktricks_documents(
     root_resolved = root.resolve()
     for file_path in sorted(root.rglob("*.md")):
         report.scanned_files += 1
+        if report.scanned_files > max_total_files:
+            report.warnings.append(f"Maximum HackTricks file count exceeded: {max_total_files}")
+            break
         if file_path.is_symlink() or not _is_inside(file_path, root_resolved):
             report.excluded_files += 1
             continue
         relative_path = file_path.resolve().relative_to(root_resolved).as_posix()
+        try:
+            size = file_path.stat().st_size
+        except OSError as exc:
+            report.excluded_files += 1
+            report.warnings.append(
+                f"Skipped unreadable HackTricks file {relative_path}: "
+                f"{exc.__class__.__name__}"
+            )
+            continue
+        if size > max_file_size_mb * 1024 * 1024:
+            report.excluded_files += 1
+            report.warnings.append(f"Skipped oversized HackTricks file: {relative_path}")
+            continue
         if _matches(relative_path, config.exclude_path_patterns) or not _matches(
             relative_path,
             config.allow_path_patterns,
@@ -247,15 +265,21 @@ def hacktricks_chunk_id(
     heading_path: list[str],
     content: str,
     knowledge_base_id: str,
+    tenant_id: str = "default",
+    environment: str = "preprod",
+    index_schema_version: int = 2,
 ) -> str:
     digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
     identity = "|".join(
         [
+            str(index_schema_version),
             source_name,
+            tenant_id,
+            environment,
+            knowledge_base_id,
             relative_path,
             " > ".join(heading_path),
             digest,
-            knowledge_base_id,
         ]
     )
     return str(uuid5(NAMESPACE_URL, identity))

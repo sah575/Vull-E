@@ -1,6 +1,9 @@
 from pathlib import Path
 
-from vulle.config import get_settings, rag_scope, resolve_profile_path
+import pytest
+from pydantic import ValidationError
+
+from vulle.config import Settings, get_settings, rag_scope, resolve_profile_path
 
 
 def test_named_profile_overrides_shared_env(
@@ -53,3 +56,12 @@ def test_explicit_rag_scope_overrides_profile_defaults() -> None:
         "environment": "staging",
         "knowledge_base_id": "bank-a-security-v3",
     }
+
+
+def test_invalid_index_batch_settings_are_rejected() -> None:
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, embedding_batch_size=0)
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, qdrant_upsert_batch_size=0)
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, rag_max_file_size_mb=0)
