@@ -30,12 +30,10 @@ class ConfluenceClient:
                 "Confluence requires CONFLUENCE_BASE_URL plus credentials, "
                 "or Jira settings that can be reused"
             )
-        if auth_mode == "basic" and not email:
-            raise ValueError("CONFLUENCE_EMAIL is required for Basic authentication")
-
         auth: tuple[str, str] | None = None
         if auth_mode == "basic":
-            assert email is not None
+            if not email:
+                raise ValueError("CONFLUENCE_EMAIL is required for Basic authentication")
             auth = (email, token)
         headers = {"Authorization": f"Bearer {token}"} if auth_mode == "bearer" else None
 

@@ -18,14 +18,12 @@ class JiraClient:
     def __init__(self, settings: Settings) -> None:
         if not settings.jira_base_url or not settings.jira_api_token:
             raise ValueError("JIRA_BASE_URL and JIRA_API_TOKEN must be configured")
-        if settings.jira_auth_mode == "basic" and not settings.jira_email:
-            raise ValueError("JIRA_EMAIL must be configured for Basic authentication")
-
         auth: tuple[str, str] | None = None
         if settings.jira_auth_mode == "basic":
-            # The validation above guarantees this and narrows the type for httpx.
-            assert settings.jira_email is not None
-            auth = (settings.jira_email, settings.jira_api_token)
+            email = settings.jira_email
+            if not email:
+                raise ValueError("JIRA_EMAIL must be configured for Basic authentication")
+            auth = (email, settings.jira_api_token)
         headers = (
             {"Authorization": f"Bearer {settings.jira_api_token}"}
             if settings.jira_auth_mode == "bearer"
