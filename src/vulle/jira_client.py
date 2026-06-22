@@ -32,7 +32,10 @@ class JiraClient:
         self._acceptance_criteria_field = settings.jira_acceptance_criteria_field
 
     def get_issue(self, issue_key: str) -> JiraIssue:
-        endpoint = f"/rest/api/{self._api_version}/issue/{issue_key}"
+        # Keep a Jira context path (for example `/jira`) configured in the
+        # base URL. A leading slash would resolve from the host root and drop
+        # that path.
+        endpoint = f"rest/api/{self._api_version}/issue/{issue_key}"
         fields = [
             "summary",
             "description",
@@ -59,7 +62,7 @@ class JiraClient:
         )
 
     def check_connection(self) -> None:
-        endpoint = f"/rest/api/{self._api_version}/myself"
+        endpoint = f"rest/api/{self._api_version}/myself"
         try:
             response = self._client.get(endpoint)
         except httpx.HTTPError as exc:

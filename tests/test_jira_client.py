@@ -60,12 +60,32 @@ def test_get_issue_requests_configured_api_and_custom_field() -> None:
     client._api_version = "2"
     client._acceptance_criteria_field = "customfield_12345"
     client._client = httpx.Client(
-        base_url="https://jira.example",
+        base_url="https://jira.example/jira",
         transport=httpx.MockTransport(handler),
     )
 
     issue = client.get_issue("BANK-12")
 
-    assert seen_url == "/rest/api/2/issue/BANK-12"
+    assert seen_url == "/jira/rest/api/2/issue/BANK-12"
     assert "customfield_12345" in seen_fields
     assert issue.acceptance_criteria == "Checker approval is required"
+
+
+def test_check_connection_preserves_jira_context_path() -> None:
+    seen_url = ""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal seen_url
+        seen_url = request.url.path
+        return httpx.Response(200, json={"name": "security.user"}, request=request)
+
+    client = object.__new__(JiraClient)
+    client._api_version = "2"
+    client._client = httpx.Client(
+        base_url="https://jira.example/jira",
+        transport=httpx.MockTransport(handler),
+    )
+
+    client.check_connection()
+
+    assert seen_url == "/jira/rest/api/2/myself"
