@@ -57,6 +57,7 @@ Edit `.env`:
 JIRA_BASE_URL=https://jira.example.com
 JIRA_EMAIL=your.email@example.com
 JIRA_API_TOKEN=your-token
+JIRA_AUTH_MODE=basic
 JIRA_API_VERSION=3
 JIRA_ACCEPTANCE_CRITERIA_FIELD=
 
@@ -141,7 +142,9 @@ Profile values override the shared `.env`. A target may override
 `QDRANT_COLLECTION` to isolate its internal knowledge. Do not commit profile
 files because they contain credentials.
 
-`JIRA_API_VERSION` and `JIRA_ACCEPTANCE_CRITERIA_FIELD` are profile-specific.
+`JIRA_AUTH_MODE`, `JIRA_API_VERSION`, and `JIRA_ACCEPTANCE_CRITERIA_FIELD` are
+profile-specific. Use `JIRA_AUTH_MODE=basic` for email/API-token authentication
+or `JIRA_AUTH_MODE=bearer` for a Jira Data Center personal access token.
 Leave the field empty to extract an Acceptance Criteria/Kabul Kriterleri
 section from the description. Set it to the real Jira field ID, such as
 `customfield_12345`, after validating the bank Jira response.

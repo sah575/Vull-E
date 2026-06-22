@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     jira_base_url: str | None = None
     jira_email: str | None = None
     jira_api_token: str | None = None
+    jira_auth_mode: Literal["basic", "bearer"] = "basic"
     jira_api_version: str = "3"
     jira_acceptance_criteria_field: str | None = None
 

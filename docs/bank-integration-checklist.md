@@ -53,9 +53,11 @@ new approved pilot baseline, and redeploy.
    knowledge-base values.
 3. Keep `HTTP_VERIFY_SSL=true`.
 4. Set `HTTP_CA_BUNDLE` when the bank uses a private CA or TLS inspection.
-5. Set `JIRA_API_VERSION` to the API version supported by the target.
-6. Set `JIRA_ACCEPTANCE_CRITERIA_FIELD` only after confirming the real field ID.
-7. Confirm the profile file is ignored by Git.
+5. Set `JIRA_AUTH_MODE=basic` for email/API-token authentication or
+   `JIRA_AUTH_MODE=bearer` for a Jira Data Center personal access token.
+6. Set `JIRA_API_VERSION` to the API version supported by the target.
+7. Set `JIRA_ACCEPTANCE_CRITERIA_FIELD` only after confirming the real field ID.
+8. Confirm the profile file is ignored by Git.
 
 ```bash
 git status --short

@@ -65,18 +65,16 @@ def run_doctor(settings: Settings, *, offline: bool = False) -> DoctorReport:
 
 
 def _jira_configuration_check(settings: Settings) -> DoctorCheck:
-    configured = [
-        settings.jira_base_url,
-        settings.jira_email,
-        settings.jira_api_token,
-    ]
+    configured = [settings.jira_base_url, settings.jira_api_token]
+    if settings.jira_auth_mode == "basic":
+        configured.append(settings.jira_email)
     if all(configured):
         return DoctorCheck(
             name="jira_configuration",
             status="pass",
             message="Jira base URL and credentials are configured.",
         )
-    if any(configured):
+    if any((settings.jira_base_url, settings.jira_email, settings.jira_api_token)):
         return DoctorCheck(
             name="jira_configuration",
             status="fail",
@@ -146,7 +144,10 @@ def _rag_scope_check(settings: Settings) -> DoctorCheck:
 
 
 def _jira_check(settings: Settings) -> DoctorCheck:
-    if not all((settings.jira_base_url, settings.jira_email, settings.jira_api_token)):
+    required = [settings.jira_base_url, settings.jira_api_token]
+    if settings.jira_auth_mode == "basic":
+        required.append(settings.jira_email)
+    if not all(required):
         return DoctorCheck(
             name="jira",
             status="warn",
@@ -162,6 +163,7 @@ def _jira_check(settings: Settings) -> DoctorCheck:
             details={
                 "base_url": settings.jira_base_url,
                 "api_version": settings.jira_api_version,
+                "auth_mode": settings.jira_auth_mode,
             },
         )
     return DoctorCheck(
@@ -171,6 +173,7 @@ def _jira_check(settings: Settings) -> DoctorCheck:
         details={
             "base_url": settings.jira_base_url,
             "api_version": settings.jira_api_version,
+            "auth_mode": settings.jira_auth_mode,
         },
     )
 

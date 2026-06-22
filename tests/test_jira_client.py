@@ -1,6 +1,7 @@
 import httpx
 import pytest
 
+from vulle.config import Settings
 from vulle.errors import JiraCustomFieldNotFoundError
 from vulle.jira_client import JiraClient, jira_payload_to_issue
 
@@ -89,3 +90,17 @@ def test_check_connection_preserves_jira_context_path() -> None:
     client.check_connection()
 
     assert seen_url == "/jira/rest/api/2/myself"
+
+
+def test_bearer_authentication_does_not_require_email() -> None:
+    client = JiraClient(
+        Settings(
+            _env_file=None,
+            jira_base_url="https://jira.example/jira",
+            jira_api_token="data-center-pat",
+            jira_auth_mode="bearer",
+        )
+    )
+
+    assert client._client.headers["Authorization"] == "Bearer data-center-pat"
+    client._client.close()
