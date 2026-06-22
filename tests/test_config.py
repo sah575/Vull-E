@@ -65,3 +65,12 @@ def test_invalid_index_batch_settings_are_rejected() -> None:
         Settings(_env_file=None, qdrant_upsert_batch_size=0)
     with pytest.raises(ValidationError):
         Settings(_env_file=None, rag_max_file_size_mb=0)
+
+
+def test_empty_ca_bundle_is_treated_as_unset(tmp_path: Path) -> None:
+    env_file = tmp_path / "profile.env"
+    env_file.write_text("HTTP_CA_BUNDLE=\n", encoding="utf-8")
+
+    settings = Settings(_env_file=env_file)
+
+    assert settings.http_ca_bundle is None

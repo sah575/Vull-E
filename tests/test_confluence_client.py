@@ -1,5 +1,6 @@
 import httpx
 
+from vulle.config import Settings
 from vulle.confluence_client import ConfluenceClient, extract_page_id
 
 
@@ -18,7 +19,11 @@ def test_extract_page_id_from_viewpage_query() -> None:
 
 
 def test_confluence_page_payload_is_parsed() -> None:
+    seen_path = ""
+
     def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal seen_path
+        seen_path = request.url.path
         return httpx.Response(
             200,
             json={
@@ -32,7 +37,7 @@ def test_confluence_page_payload_is_parsed() -> None:
         )
 
     client = object.__new__(ConfluenceClient)
-    client._base_url = "https://confluence.example"
+    client._base_url = "https://confluence.example/confluence"
     client._client = httpx.Client(
         base_url=client._base_url,
         transport=httpx.MockTransport(handler),
@@ -43,3 +48,39 @@ def test_confluence_page_payload_is_parsed() -> None:
     assert page.title == "Security Design"
     assert page.space_key == "SEC"
     assert page.body_text == "Branch ownership is required."
+    assert seen_path == "/confluence/rest/api/content/123"
+
+
+def test_bearer_authentication_does_not_require_email() -> None:
+    client = ConfluenceClient(
+        Settings(
+            _env_file=None,
+            jira_auth_mode="bearer",
+            confluence_base_url="https://confluence.example/confluence",
+            confluence_api_token="data-center-pat",
+            confluence_auth_mode="bearer",
+        )
+    )
+
+    assert client._client.headers["Authorization"] == "Bearer data-center-pat"
+    client._client.close()
+
+
+def test_check_connection_preserves_confluence_context_path() -> None:
+    seen_path = ""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal seen_path
+        seen_path = request.url.path
+        return httpx.Response(200, json={"results": []}, request=request)
+
+    client = object.__new__(ConfluenceClient)
+    client._base_url = "https://confluence.example/confluence"
+    client._client = httpx.Client(
+        base_url=client._base_url,
+        transport=httpx.MockTransport(handler),
+    )
+
+    client.check_connection()
+
+    assert seen_path == "/confluence/rest/api/space"

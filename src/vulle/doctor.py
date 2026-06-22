@@ -90,22 +90,26 @@ def _jira_configuration_check(settings: Settings) -> DoctorCheck:
 def _confluence_configuration_check(settings: Settings) -> DoctorCheck:
     explicit = [
         settings.confluence_base_url,
-        settings.confluence_email,
-        settings.confluence_api_token,
+        settings.confluence_api_token or settings.jira_api_token,
     ]
-    jira_fallback = [
-        settings.jira_base_url,
-        settings.jira_email,
-        settings.jira_api_token,
-    ]
+    confluence_auth_mode = settings.confluence_auth_mode or settings.jira_auth_mode
+    if confluence_auth_mode == "basic":
+        explicit.append(settings.confluence_email or settings.jira_email)
+    jira_fallback = [settings.jira_base_url, settings.jira_api_token]
+    if settings.jira_auth_mode == "basic":
+        jira_fallback.append(settings.jira_email)
     status: Literal["pass", "warn", "fail"]
     if all(explicit):
         message = "Confluence URL and credentials are configured."
         status = "pass"
-    elif not any(explicit) and all(jira_fallback):
+    elif not any(
+        (settings.confluence_base_url, settings.confluence_email, settings.confluence_api_token)
+    ) and all(jira_fallback):
         message = "Confluence will reuse the Jira URL and credentials."
         status = "pass"
-    elif any(explicit):
+    elif any(
+        (settings.confluence_base_url, settings.confluence_email, settings.confluence_api_token)
+    ):
         message = "Confluence configuration is incomplete."
         status = "fail"
     else:
@@ -179,17 +183,20 @@ def _jira_check(settings: Settings) -> DoctorCheck:
 
 
 def _confluence_check(settings: Settings) -> DoctorCheck:
-    explicit = (
+    auth_mode = settings.confluence_auth_mode or settings.jira_auth_mode
+    explicit = [
         settings.confluence_base_url,
-        settings.confluence_email,
-        settings.confluence_api_token,
+        settings.confluence_api_token or settings.jira_api_token,
+    ]
+    if auth_mode == "basic":
+        explicit.append(settings.confluence_email or settings.jira_email)
+    fallback = [settings.jira_base_url, settings.jira_api_token]
+    if settings.jira_auth_mode == "basic":
+        fallback.append(settings.jira_email)
+    has_explicit = any(
+        (settings.confluence_base_url, settings.confluence_email, settings.confluence_api_token)
     )
-    fallback = (
-        settings.jira_base_url,
-        settings.jira_email,
-        settings.jira_api_token,
-    )
-    if not all(explicit) and not (not any(explicit) and all(fallback)):
+    if not all(explicit) and not (not has_explicit and all(fallback)):
         return DoctorCheck(
             name="confluence",
             status="warn",
@@ -202,13 +209,19 @@ def _confluence_check(settings: Settings) -> DoctorCheck:
             name="confluence",
             status="fail",
             message=str(exc),
-            details={"base_url": settings.confluence_base_url},
+            details={
+                "base_url": settings.confluence_base_url,
+                "auth_mode": auth_mode,
+            },
         )
     return DoctorCheck(
         name="confluence",
         status="pass",
         message="Confluence authentication and API endpoint are reachable.",
-        details={"base_url": settings.confluence_base_url or "derived from Jira"},
+        details={
+            "base_url": settings.confluence_base_url or "derived from Jira",
+            "auth_mode": auth_mode,
+        },
     )
 
 

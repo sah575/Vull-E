@@ -23,17 +23,27 @@ class ConfluenceClient:
         )
         email = settings.confluence_email or settings.jira_email
         token = settings.confluence_api_token or settings.jira_api_token
+        auth_mode = settings.confluence_auth_mode or settings.jira_auth_mode
 
-        if not base_url or not email or not token:
+        if not base_url or not token:
             raise ValueError(
                 "Confluence requires CONFLUENCE_BASE_URL plus credentials, "
                 "or Jira settings that can be reused"
             )
+        if auth_mode == "basic" and not email:
+            raise ValueError("CONFLUENCE_EMAIL is required for Basic authentication")
+
+        auth: tuple[str, str] | None = None
+        if auth_mode == "basic":
+            assert email is not None
+            auth = (email, token)
+        headers = {"Authorization": f"Bearer {token}"} if auth_mode == "bearer" else None
 
         self._base_url = base_url.rstrip("/")
         self._client = httpx.Client(
             base_url=self._base_url,
-            auth=(email, token),
+            auth=auth,
+            headers=headers,
             timeout=30,
             verify=tls_verify(
                 verify_ssl=settings.http_verify_ssl,
@@ -74,9 +84,8 @@ class ConfluenceClient:
         return pages
 
     def _fetch_page_payload(self, page_id: str) -> dict[str, Any]:
-        # Atlassian Cloud and many Server/DC instances support this endpoint.
-        api_prefix = "" if self._base_url.endswith("/wiki") else "/wiki"
-        endpoint = f"{api_prefix}/rest/api/content/{page_id}"
+        # A relative endpoint preserves `/wiki` or `/confluence` in the base URL.
+        endpoint = f"rest/api/content/{page_id}"
         try:
             response = self._client.get(
                 endpoint,
@@ -88,19 +97,6 @@ class ConfluenceClient:
                 service="Confluence",
                 endpoint=endpoint,
             ) from exc
-        if response.status_code == 404:
-            endpoint = f"/rest/api/content/{page_id}"
-            try:
-                response = self._client.get(
-                    endpoint,
-                    params={"expand": "body.storage,body.view,space,_links"},
-                )
-            except httpx.HTTPError as exc:
-                raise translate_http_error(
-                    exc,
-                    service="Confluence",
-                    endpoint=endpoint,
-                ) from exc
         raise_for_response(response, service="Confluence", endpoint=endpoint)
         payload = response_json(response, service="Confluence", endpoint=endpoint)
         if not isinstance(payload, dict):
@@ -108,7 +104,7 @@ class ConfluenceClient:
         return payload
 
     def check_connection(self) -> None:
-        endpoint = "/rest/api/space"
+        endpoint = "rest/api/space"
         try:
             response = self._client.get(endpoint, params={"limit": 1})
         except httpx.HTTPError as exc:

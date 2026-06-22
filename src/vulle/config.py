@@ -3,7 +3,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PROFILE_ENV_VAR = "VULLE_PROFILE"
@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     confluence_base_url: str | None = None
     confluence_email: str | None = None
     confluence_api_token: str | None = None
+    confluence_auth_mode: Literal["basic", "bearer"] | None = None
 
     llm_base_url: str = "http://127.0.0.1:8000/v1"
     llm_api_key: str = "local-not-needed"
@@ -61,6 +62,13 @@ class Settings(BaseSettings):
     rag_max_chunks_per_document: int = Field(default=500, gt=0, le=100000)
     rag_follow_symlinks: bool = False
     rag_index_schema_version: int = Field(default=2, gt=0)
+
+    @field_validator("http_ca_bundle", mode="before")
+    @classmethod
+    def empty_ca_bundle_is_none(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
 
 
 @lru_cache
