@@ -21,5 +21,6 @@ reports/
 report.json
 rag-eval.json
 external_sources/
+models/
 docs/knowledge/generated/
 docs/knowledge/internal/private/

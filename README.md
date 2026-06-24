@@ -108,6 +108,26 @@ RAG_INDEX_SCHEMA_VERSION=2
 The LLM server must expose an OpenAI-compatible `/chat/completions` API.
 The embedding server must expose an OpenAI-compatible `/embeddings` API.
 
+For an offline/local embedding server, place the model under
+`models/BAAI/bge-m3` and run:
+
+```bash
+python -m pip install -e ".[embedding-server]"
+python -m vulle.embedding_server --model-path models/BAAI/bge-m3 \
+  --model-name BAAI/bge-m3 --host 127.0.0.1 --port 8010 \
+  --device cpu --batch-size 4
+```
+
+Then set the active profile:
+
+```env
+EMBEDDING_BASE_URL=http://127.0.0.1:8010/v1
+EMBEDDING_API_KEY=local-not-needed
+EMBEDDING_MODEL=BAAI/bge-m3
+EMBEDDING_DIMENSIONS=1024
+EMBEDDING_BATCH_SIZE=4
+```
+
 Start local Qdrant with Docker:
 
 ```bash

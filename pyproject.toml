@@ -23,6 +23,12 @@ dependencies = [
 vulle = "vulle.cli:app"
 
 [project.optional-dependencies]
+embedding-server = [
+  "fastapi>=0.115.0",
+  "sentence-transformers>=3.0.0",
+  "torch>=2.3.0",
+  "uvicorn>=0.30.0",
+]
 dev = [
   "bandit>=1.9.4",
   "mypy>=2.1.0",
