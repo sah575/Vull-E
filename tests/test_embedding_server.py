@@ -8,4 +8,4 @@ def test_embedding_server_help_is_available() -> None:
 
     assert result.exit_code == 0
     assert "sentence-transformers model" in result.output
-    assert "--model-path" in result.output
+    assert "/v1/embeddings" in result.output
