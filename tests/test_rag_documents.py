@@ -42,6 +42,25 @@ def test_load_documents_adds_source_type_metadata() -> None:
     assert all("index_root" in chunk.metadata for chunk in chunks)
 
 
+def test_generated_source_directories_keep_authority_metadata(tmp_path: Path) -> None:
+    root = tmp_path / "docs/knowledge/generated"
+    for source_dir, expected_type, expected_priority in [
+        ("owasp-wstg", "owasp", 0.60),
+        ("mitre-cwe", "mitre", 0.65),
+        ("payloads", "payloads", 0.50),
+    ]:
+        path = root / source_dir / "example.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            "# Example\n\nAuthorization and injection testing guidance for APIs.",
+            encoding="utf-8",
+        )
+        chunks = load_documents(path)
+        assert chunks
+        assert chunks[0].metadata["source_type"] == expected_type
+        assert chunks[0].metadata["source_priority"] == expected_priority
+
+
 def test_template_documents_are_marked_low_priority() -> None:
     chunks = load_documents(Path("docs/knowledge/internal/role-matrix.template.md"))
 

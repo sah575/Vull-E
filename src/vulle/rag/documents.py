@@ -739,10 +739,12 @@ def _source_type(path: Path) -> str:
         return "internal"
     if "portswigger" in parts:
         return "portswigger"
-    if "mitre" in parts:
+    if "mitre" in parts or any(part.startswith("mitre-") for part in parts):
         return "mitre"
-    if "owasp" in parts:
+    if "owasp" in parts or any(part.startswith("owasp-") for part in parts):
         return "owasp"
+    if "payloads" in parts or "payloadsallthethings" in parts:
+        return "payloads"
     return "local"
 
 
@@ -756,6 +758,7 @@ def _source_priority(path: Path) -> float:
         "mitre": 0.65,
         "owasp": 0.60,
         "portswigger": 0.55,
+        "payloads": 0.50,
     }[source_type]
 
 

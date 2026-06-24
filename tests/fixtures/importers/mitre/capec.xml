@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Attack_Pattern_Catalog>
+  <Attack_Patterns>
+    <Attack_Pattern ID="115" Name="Authentication Bypass" Abstraction="Standard" Status="Draft">
+      <Description>Attackers bypass authentication checks to access protected functions.</Description>
+      <Typical_Severity>High</Typical_Severity>
+    </Attack_Pattern>
+    <Attack_Pattern ID="9999" Name="Physical Tampering" Abstraction="Standard" Status="Draft">
+      <Description>Physical hardware tampering example.</Description>
+    </Attack_Pattern>
+  </Attack_Patterns>
+</Attack_Pattern_Catalog>

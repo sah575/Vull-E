@@ -15,6 +15,14 @@ from vulle.errors import VulleError
 from vulle.jira_client import JiraClient, jira_payload_to_issue
 from vulle.models import ConfluencePage, JiraIssue
 from vulle.rag.evaluation import aggregate_results, evaluate_case
+from vulle.rag.importers import (
+    ImportReport,
+    import_mitre_capec,
+    import_mitre_cwe,
+    import_owasp_api,
+    import_owasp_wstg,
+    import_payloads,
+)
 from vulle.rag.service import RagService
 
 app = typer.Typer(help="Vull-E security analysis CLI")
@@ -117,6 +125,56 @@ def rag_index_hacktricks(
         _emit_json(report.model_dump())
 
 
+@app.command("rag-import-owasp-wstg")
+def rag_import_owasp_wstg(
+    source: Path,
+    output_root: Path = Path("docs/knowledge/generated"),
+    output: Path | None = None,
+) -> None:
+    """Normalize selected OWASP WSTG markdown into generated RAG knowledge."""
+    _emit_import_report(import_owasp_wstg(source, output_root), output)
+
+
+@app.command("rag-import-owasp-api")
+def rag_import_owasp_api(
+    source: Path,
+    output_root: Path = Path("docs/knowledge/generated"),
+    output: Path | None = None,
+) -> None:
+    """Normalize OWASP API Security markdown into generated RAG knowledge."""
+    _emit_import_report(import_owasp_api(source, output_root), output)
+
+
+@app.command("rag-import-payloads")
+def rag_import_payloads(
+    source: Path,
+    output_root: Path = Path("docs/knowledge/generated"),
+    output: Path | None = None,
+) -> None:
+    """Normalize selected PayloadsAllTheThings AppSec/API markdown."""
+    _emit_import_report(import_payloads(source, output_root), output)
+
+
+@app.command("rag-import-mitre-cwe")
+def rag_import_mitre_cwe(
+    source: Path,
+    output_root: Path = Path("docs/knowledge/generated"),
+    output: Path | None = None,
+) -> None:
+    """Normalize selected MITRE CWE CSV/XML records into generated markdown."""
+    _emit_import_report(import_mitre_cwe(source, output_root), output)
+
+
+@app.command("rag-import-mitre-capec")
+def rag_import_mitre_capec(
+    source: Path,
+    output_root: Path = Path("docs/knowledge/generated"),
+    output: Path | None = None,
+) -> None:
+    """Normalize selected MITRE CAPEC CSV/XML records into generated markdown."""
+    _emit_import_report(import_mitre_capec(source, output_root), output)
+
+
 @app.command("rag-search")
 def rag_search(query: str, limit: int | None = None) -> None:
     """Search the Qdrant-backed knowledge base."""
@@ -204,6 +262,19 @@ def _emit_json(payload: Any, output: Path | None = None) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(f"{rendered}\n", encoding="utf-8")
     console.print(f"[green]Wrote output to {output}.[/green]")
+
+
+def _emit_import_report(report: ImportReport, output: Path | None = None) -> None:
+    payload = report.model_dump()
+    console.print(f"Source: {payload['source_kind']}")
+    console.print(f"Files scanned: {payload['files_scanned']}")
+    console.print(f"Files written: {payload['files_written']}")
+    console.print(f"Files skipped: {payload['files_skipped']}")
+    console.print(f"Records scanned: {payload['records_scanned']}")
+    console.print(f"Records written: {payload['records_written']}")
+    console.print(f"Output path: {payload['output_path']}")
+    if output:
+        _emit_json(payload, output)
 
 
 def _print_index_summary(report: dict[str, Any]) -> None:

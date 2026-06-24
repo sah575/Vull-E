@@ -1,0 +1,4 @@
+ID,Name,Description,Extended Description
+89,SQL Injection,Improper neutralization of special elements used in an SQL command.,Input can alter the intended SQL query.
+862,Missing Authorization,The product does not perform an authorization check.,Access control boundaries can be bypassed.
+9999,Unrelated Hardware Issue,This record is about hardware timing.,Not relevant to AppSec API testing.

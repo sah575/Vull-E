@@ -20,4 +20,6 @@ build/
 reports/
 report.json
 rag-eval.json
+external_sources/
+docs/knowledge/generated/
 docs/knowledge/internal/private/

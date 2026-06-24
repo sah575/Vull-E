@@ -218,6 +218,39 @@ RAG_KNOWLEDGE_BASE_ID=bank-a-security-v1
 Every Qdrant search and delete operation is filtered by all three values.
 Collection separation remains useful, but it is not the only isolation control.
 
+## RAG Source Imports
+
+External Tier-1/Tier-2 sources should be imported into normalized markdown
+before indexing. Keep raw upstream repositories outside committed project
+knowledge, for example under `external_sources/`:
+
+```bash
+git clone https://github.com/OWASP/wstg.git external_sources/owasp-wstg
+git clone https://github.com/OWASP/API-Security.git external_sources/owasp-api-security
+git clone https://github.com/swisskyrepo/PayloadsAllTheThings.git external_sources/payloadsallthethings
+```
+
+Generate normalized RAG documents:
+
+```bash
+vulle rag-import-owasp-wstg external_sources/owasp-wstg
+vulle rag-import-owasp-api external_sources/owasp-api-security
+vulle rag-import-payloads external_sources/payloadsallthethings
+vulle rag-import-mitre-cwe external_sources/mitre/cwe.csv
+vulle rag-import-mitre-capec external_sources/mitre/capec.xml
+```
+
+The import commands write to `docs/knowledge/generated/<source>/`. After import,
+index the generated and curated knowledge:
+
+```bash
+vulle --profile bank-a rag-index docs/knowledge --sync
+```
+
+The import pipeline is selective: it keeps AppSec/API-relevant material and
+skips broad low-value or unrelated content. MITRE CWE/CAPEC CSV/XML files are
+converted into focused markdown records before indexing.
+
 ## Doctor
 
 Run a complete compatibility check after moving Vull-E or changing models:
