@@ -40,6 +40,7 @@ class Settings(BaseSettings):
     embedding_model: str = "bge-m3"
     embedding_dimensions: int = Field(default=1024, gt=0)
     embedding_batch_size: int = Field(default=32, gt=0, le=4096)
+    embedding_timeout_seconds: int = Field(default=600, gt=0)
 
     qdrant_url: str = "http://127.0.0.1:6333"
     qdrant_api_key: str | None = None

@@ -17,7 +17,7 @@ class EmbeddingClient:
         self._client = httpx.Client(
             base_url=settings.embedding_base_url.rstrip("/"),
             headers={"Authorization": f"Bearer {settings.embedding_api_key}"},
-            timeout=120,
+            timeout=settings.embedding_timeout_seconds,
             verify=tls_verify(
                 verify_ssl=settings.http_verify_ssl,
                 ca_bundle=settings.http_ca_bundle,

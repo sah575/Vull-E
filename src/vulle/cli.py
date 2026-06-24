@@ -86,7 +86,11 @@ def rag_index(
 ) -> None:
     """Index markdown, text, or JSON knowledge documents into Qdrant."""
     settings = get_settings()
-    report = RagService(settings).index_path_report(path, sync=sync, dry_run=dry_run)
+    report = RagService(settings, progress_callback=_print_progress).index_path_report(
+        path,
+        sync=sync,
+        dry_run=dry_run,
+    )
     _print_index_summary(report.model_dump())
     if output:
         _emit_json(report.model_dump(), output)
@@ -112,7 +116,11 @@ def rag_index_hacktricks(
             f"HackTricks path does not exist or is not a directory: {path}",
             param_hint="PATH",
         )
-    report = RagService(settings).index_hacktricks_report(path, sync=sync, dry_run=dry_run)
+    report = RagService(settings, progress_callback=_print_progress).index_hacktricks_report(
+        path,
+        sync=sync,
+        dry_run=dry_run,
+    )
     console.print(
         "[yellow]HackTricks is external testing guidance, not bank policy or "
         "vulnerability evidence. Review current license terms before internal "
@@ -275,6 +283,12 @@ def _emit_import_report(report: ImportReport, output: Path | None = None) -> Non
     console.print(f"Output path: {payload['output_path']}")
     if output:
         _emit_json(payload, output)
+
+
+def _print_progress(event: dict[str, Any]) -> None:
+    message = event.get("message")
+    if message:
+        console.print(f"[cyan]{message}[/cyan]")
 
 
 def _print_index_summary(report: dict[str, Any]) -> None:

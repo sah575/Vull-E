@@ -187,6 +187,27 @@ def test_embedding_and_qdrant_batches_are_bounded(tmp_path: Path) -> None:
     assert report.chunks_upserted == 33
 
 
+def test_index_progress_reports_embedding_and_upsert_percent(tmp_path: Path) -> None:
+    _write_docs(tmp_path, 3)
+    events: list[dict[str, object]] = []
+    settings = Settings(
+        _env_file=None,
+        embedding_batch_size=2,
+        qdrant_upsert_batch_size=1,
+        rag_index_retry_base_delay_seconds=0,
+    )
+
+    service = _service(settings, FakeEmbeddings(), FakeStore())
+    service._progress_callback = events.append
+    report = service.index_path_report(tmp_path)
+
+    assert report.chunks_upserted == 3
+    assert any(event.get("stage") == "embedding" for event in events)
+    assert any(event.get("stage") == "embedding_done" for event in events)
+    assert any(event.get("stage") == "qdrant_upsert" for event in events)
+    assert events[-1]["percent"] == 100.0
+
+
 def test_embedding_count_mismatch_fails(tmp_path: Path) -> None:
     _write_docs(tmp_path, 2)
     service = _service(

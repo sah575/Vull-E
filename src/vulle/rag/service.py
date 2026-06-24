@@ -1,5 +1,6 @@
 import json
 import re
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -114,10 +115,21 @@ class RagStoreLike(Protocol):
 
 
 class RagService:
-    def __init__(self, settings: Settings) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        *,
+        progress_callback: Callable[[dict[str, Any]], None] | None = None,
+    ) -> None:
         self._settings = settings
+        self._progress_callback = progress_callback
         self._embeddings: EmbeddingLike | None = None
         self._store: RagStoreLike | None = None
+
+    def _emit_progress(self, **event: Any) -> None:
+        callback = getattr(self, "_progress_callback", None)
+        if callback is not None:
+            callback(event)
 
     def _embedding_client(self) -> EmbeddingLike:
         if getattr(self, "_embeddings", None) is None:
@@ -254,6 +266,10 @@ class RagService:
             )
             sync = False
         if sync:
+            self._emit_progress(
+                stage="qdrant_sync",
+                message="Removing stale documents for index root.",
+            )
             self._rag_store().sync_index_root(
                 normalized_path(path),
                 [],
@@ -262,6 +278,10 @@ class RagService:
                 source_type=source_type,
             )
         elif document_ids:
+            self._emit_progress(
+                stage="qdrant_delete",
+                message=f"Replacing {len(document_ids)} existing document(s).",
+            )
             self._rag_store().delete_documents(
                 document_ids,
                 source_name=source_name,
@@ -278,6 +298,24 @@ class RagService:
             batched(chunks, self._settings.embedding_batch_size),
             start=1,
         ):
+            embedded_before = min(
+                (batch_number - 1) * self._settings.embedding_batch_size,
+                len(chunks),
+            )
+            self._emit_progress(
+                stage="embedding",
+                batch_number=batch_number,
+                total_batches=total_embedding_batches,
+                chunks_done=embedded_before,
+                total_chunks=len(chunks),
+                percent=round((embedded_before / len(chunks)) * 100, 1) if chunks else 100.0,
+                message=(
+                    f"Embedding batch {batch_number}/{total_embedding_batches} "
+                    f"({embedded_before}/{len(chunks)} chunks, "
+                    f"{round((embedded_before / len(chunks)) * 100, 1) if chunks else 100.0}%)"
+                ),
+            )
+
             def embed_batch(batch: list[RagChunk] = chunk_batch) -> list[list[float]]:
                 return self._embedding_client().embed_texts(
                     [chunk.text for chunk in batch]
@@ -296,6 +334,23 @@ class RagService:
                 report.errors.append(str(exc))
                 raise
             report.retry_count += retries
+            embedded_after = min(
+                batch_number * self._settings.embedding_batch_size,
+                len(chunks),
+            )
+            self._emit_progress(
+                stage="embedding_done",
+                batch_number=batch_number,
+                total_batches=total_embedding_batches,
+                chunks_done=embedded_after,
+                total_chunks=len(chunks),
+                percent=round((embedded_after / len(chunks)) * 100, 1) if chunks else 100.0,
+                message=(
+                    f"Embedded batch {batch_number}/{total_embedding_batches} "
+                    f"({embedded_after}/{len(chunks)} chunks, "
+                    f"{round((embedded_after / len(chunks)) * 100, 1) if chunks else 100.0}%)"
+                ),
+            )
             if len(vectors) != len(chunk_batch):
                 report.chunks_failed += len(chunk_batch)
                 raise ValueError(
@@ -353,6 +408,23 @@ class RagService:
             report.retry_count += retries
             report.qdrant_batches += 1
             report.chunks_upserted += len(chunk_batch)
+            percent = (
+                round((report.chunks_upserted / report.chunks_created) * 100, 1)
+                if report.chunks_created
+                else 100.0
+            )
+            self._emit_progress(
+                stage="qdrant_upsert",
+                batch_number=report.qdrant_batches,
+                total_batches=report.embedding_batches,
+                chunks_done=report.chunks_upserted,
+                total_chunks=report.chunks_created,
+                percent=percent,
+                message=(
+                    f"Upserted {report.chunks_upserted}/{report.chunks_created} chunks "
+                    f"({percent}%)"
+                ),
+            )
 
     def search(self, query: str, limit: int | None = None) -> list[RagChunk]:
         redacted_query = (

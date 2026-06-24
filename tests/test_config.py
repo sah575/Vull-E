@@ -54,6 +54,7 @@ def test_named_profile_can_contain_complete_runtime_config(
         "EMBEDDING_API_KEY=embedding-token\n"
         "EMBEDDING_MODEL=bank-embedding\n"
         "EMBEDDING_DIMENSIONS=768\n"
+        "EMBEDDING_TIMEOUT_SECONDS=900\n"
         "QDRANT_URL=http://qdrant.example:6333\n"
         "QDRANT_PATH=.vulle/qdrant_local\n"
         "QDRANT_COLLECTION=bank_a_knowledge\n",
@@ -70,6 +71,7 @@ def test_named_profile_can_contain_complete_runtime_config(
     assert settings.embedding_api_key == "embedding-token"
     assert settings.embedding_model == "bank-embedding"
     assert settings.embedding_dimensions == 768
+    assert settings.embedding_timeout_seconds == 900
     assert settings.qdrant_url == "http://qdrant.example:6333"
     assert settings.qdrant_path == Path(".vulle/qdrant_local")
     assert settings.qdrant_collection == "bank_a_knowledge"
