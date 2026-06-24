@@ -49,7 +49,7 @@ Qdrant filters.
 The embedding service must expose an OpenAI-compatible `/embeddings` endpoint.
 The chat model must expose an OpenAI-compatible `/chat/completions` endpoint.
 
-For local development:
+For local development with Docker:
 
 ```bash
 docker compose up -d qdrant
@@ -57,6 +57,17 @@ vulle rag-index docs/knowledge --sync
 vulle rag-search "maker checker approval"
 vulle rag-eval tests/rag_eval_cases.json
 ```
+
+When Docker is not available, set `QDRANT_PATH` in the active profile:
+
+```env
+QDRANT_PATH=.vulle/qdrant_local
+```
+
+With `QDRANT_PATH` set, Vull-E uses Qdrant's embedded local storage from the
+Python client. This is useful for a single-user bank workstation where local
+admin rights are not available. It is not a shared network service; other
+machines cannot connect to it over HTTP.
 
 Recommended knowledge layout:
 

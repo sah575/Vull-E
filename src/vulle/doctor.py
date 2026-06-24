@@ -3,7 +3,6 @@ from typing import Any, Literal
 
 import httpx
 from pydantic import BaseModel, Field
-from qdrant_client import QdrantClient
 
 from vulle.config import Settings, active_profile_name, rag_scope
 from vulle.confluence_client import ConfluenceClient
@@ -17,6 +16,7 @@ from vulle.errors import (
     translate_http_error,
 )
 from vulle.jira_client import JiraClient
+from vulle.rag.qdrant_store import build_qdrant_client, qdrant_location_details
 
 
 class DoctorCheck(BaseModel):
@@ -348,15 +348,7 @@ def _embedding_check(settings: Settings) -> DoctorCheck:
 
 def _qdrant_check(settings: Settings) -> DoctorCheck:
     try:
-        client = QdrantClient(
-            url=settings.qdrant_url,
-            api_key=settings.qdrant_api_key,
-            timeout=10,
-            verify=tls_verify(
-                verify_ssl=settings.http_verify_ssl,
-                ca_bundle=settings.http_ca_bundle,
-            ),
-        )
+        client = build_qdrant_client(settings, timeout=10)
         names = {item.name for item in client.get_collections().collections}
         if settings.qdrant_collection not in names:
             return DoctorCheck(
@@ -383,7 +375,7 @@ def _qdrant_check(settings: Settings) -> DoctorCheck:
             name="qdrant",
             status="fail",
             message=f"Qdrant check failed: {_error_summary(exc)}",
-            details={"url": settings.qdrant_url},
+            details=qdrant_location_details(settings),
         )
     return DoctorCheck(
         name="qdrant",

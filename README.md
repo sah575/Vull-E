@@ -82,6 +82,7 @@ EMBEDDING_BATCH_SIZE=32
 
 QDRANT_URL=http://127.0.0.1:6333
 QDRANT_API_KEY=
+QDRANT_PATH=
 QDRANT_COLLECTION=vulle_knowledge
 RAG_TENANT_ID=
 RAG_ENVIRONMENT=preprod
@@ -107,11 +108,20 @@ RAG_INDEX_SCHEMA_VERSION=2
 The LLM server must expose an OpenAI-compatible `/chat/completions` API.
 The embedding server must expose an OpenAI-compatible `/embeddings` API.
 
-Start local Qdrant:
+Start local Qdrant with Docker:
 
 ```bash
 docker compose up -d qdrant
 ```
+
+If Docker is not available, use embedded Python Qdrant storage instead:
+
+```env
+QDRANT_PATH=.vulle/qdrant_local
+```
+
+When `QDRANT_PATH` is set, Vull-E uses local on-disk Qdrant storage inside the
+Python process and ignores `QDRANT_URL`.
 
 ## Multiple Targets
 
@@ -154,6 +164,7 @@ EMBEDDING_DIMENSIONS=1024
 
 QDRANT_URL=http://127.0.0.1:6333
 QDRANT_API_KEY=
+QDRANT_PATH=.vulle/qdrant_local
 QDRANT_COLLECTION=vulle_bank_a_knowledge
 
 RAG_TENANT_ID=bank-a

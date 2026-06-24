@@ -55,6 +55,7 @@ def test_named_profile_can_contain_complete_runtime_config(
         "EMBEDDING_MODEL=bank-embedding\n"
         "EMBEDDING_DIMENSIONS=768\n"
         "QDRANT_URL=http://qdrant.example:6333\n"
+        "QDRANT_PATH=.vulle/qdrant_local\n"
         "QDRANT_COLLECTION=bank_a_knowledge\n",
         encoding="utf-8",
     )
@@ -70,6 +71,7 @@ def test_named_profile_can_contain_complete_runtime_config(
     assert settings.embedding_model == "bank-embedding"
     assert settings.embedding_dimensions == 768
     assert settings.qdrant_url == "http://qdrant.example:6333"
+    assert settings.qdrant_path == Path(".vulle/qdrant_local")
     assert settings.qdrant_collection == "bank_a_knowledge"
     get_settings.cache_clear()
 

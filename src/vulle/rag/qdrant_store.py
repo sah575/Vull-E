@@ -13,15 +13,7 @@ class QdrantRagStore:
         self._settings = settings
         self._scope = rag_scope(settings)
         self._payload_indexes_ready = False
-        self._client = QdrantClient(
-            url=settings.qdrant_url,
-            api_key=settings.qdrant_api_key,
-            timeout=30,
-            verify=tls_verify(
-                verify_ssl=settings.http_verify_ssl,
-                ca_bundle=settings.http_ca_bundle,
-            ),
-        )
+        self._client = build_qdrant_client(settings, timeout=30)
 
     def ensure_collection(self, *, ensure_payload_indexes: bool = False) -> None:
         collections = self._client.get_collections().collections
@@ -199,6 +191,9 @@ class QdrantRagStore:
     def _ensure_payload_indexes(self) -> None:
         if self._payload_indexes_ready:
             return
+        if self._settings.qdrant_path is not None:
+            self._payload_indexes_ready = True
+            return
         for field_name in (
             "tenant_id",
             "environment",
@@ -215,3 +210,24 @@ class QdrantRagStore:
                 wait=True,
             )
         self._payload_indexes_ready = True
+
+
+def build_qdrant_client(settings: Settings, *, timeout: int) -> QdrantClient:
+    if settings.qdrant_path is not None:
+        settings.qdrant_path.mkdir(parents=True, exist_ok=True)
+        return QdrantClient(path=str(settings.qdrant_path), timeout=timeout)
+    return QdrantClient(
+        url=settings.qdrant_url,
+        api_key=settings.qdrant_api_key,
+        timeout=timeout,
+        verify=tls_verify(
+            verify_ssl=settings.http_verify_ssl,
+            ca_bundle=settings.http_ca_bundle,
+        ),
+    )
+
+
+def qdrant_location_details(settings: Settings) -> dict[str, str]:
+    if settings.qdrant_path is not None:
+        return {"path": str(settings.qdrant_path)}
+    return {"url": settings.qdrant_url}

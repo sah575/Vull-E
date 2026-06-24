@@ -55,12 +55,14 @@ new approved pilot baseline, and redeploy.
    all required values.
 3. Keep `HTTP_VERIFY_SSL=true`.
 4. Set `HTTP_CA_BUNDLE` when the bank uses a private CA or TLS inspection.
-5. Set `JIRA_AUTH_MODE=basic` for email/API-token authentication or
+5. Use `QDRANT_PATH=.vulle/qdrant_local` when Docker/local admin rights are not
+   available, or use `QDRANT_URL` for an approved Qdrant service.
+6. Set `JIRA_AUTH_MODE=basic` for email/API-token authentication or
    `JIRA_AUTH_MODE=bearer` for a Jira Data Center personal access token.
-6. Set `JIRA_API_VERSION` to the API version supported by the target.
-7. Set `JIRA_ACCEPTANCE_CRITERIA_FIELD` only after confirming the real field ID.
-8. Confirm the profile file is ignored by Git.
-9. Set `CONFLUENCE_AUTH_MODE=basic` for email/API-token authentication or
+7. Set `JIRA_API_VERSION` to the API version supported by the target.
+8. Set `JIRA_ACCEPTANCE_CRITERIA_FIELD` only after confirming the real field ID.
+9. Confirm the profile file is ignored by Git.
+10. Set `CONFLUENCE_AUTH_MODE=basic` for email/API-token authentication or
    `CONFLUENCE_AUTH_MODE=bearer` for a Confluence Data Center personal access
    token. An omitted Confluence token reuses the configured Jira token.
 

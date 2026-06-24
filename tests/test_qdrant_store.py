@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from uuid import uuid4
 
 from vulle.config import Settings
 from vulle.models import RagChunk
@@ -138,7 +139,33 @@ def test_scope_metadata_cannot_be_overridden_by_chunk() -> None:
     )
 
     store.upsert_chunks([chunk], [[0.1, 0.2]])
-
     payload = client.upserts[0]["points"][0].payload
     assert payload["tenant_id"] == "bank-a"
     assert payload["knowledge_base_id"] == "bank-a-security-v1"
+
+
+def test_local_qdrant_path_supports_upsert_and_search(tmp_path) -> None:
+    settings = Settings(
+        _env_file=None,
+        qdrant_path=tmp_path / "qdrant_local",
+        qdrant_collection="knowledge",
+        embedding_dimensions=2,
+        rag_tenant_id="bank-a",
+        rag_environment="preprod",
+        rag_knowledge_base_id="bank-a-security-v1",
+    )
+    store = QdrantRagStore(settings)
+    chunk = RagChunk(
+        id=str(uuid4()),
+        source="docs/a.md",
+        title="A",
+        text="maker checker approval",
+        metadata={"document_id": "doc-1"},
+    )
+
+    store.upsert_chunks([chunk], [[0.1, 0.2]])
+    results = store.search([0.1, 0.2], 1)
+
+    assert settings.qdrant_path.is_dir()
+    assert len(results) == 1
+    assert results[0].text == "maker checker approval"

@@ -43,6 +43,7 @@ class Settings(BaseSettings):
 
     qdrant_url: str = "http://127.0.0.1:6333"
     qdrant_api_key: str | None = None
+    qdrant_path: Path | None = None
     qdrant_collection: str = "vulle_knowledge"
     rag_tenant_id: str | None = None
     rag_environment: str = "preprod"
@@ -66,6 +67,13 @@ class Settings(BaseSettings):
     @field_validator("http_ca_bundle", mode="before")
     @classmethod
     def empty_ca_bundle_is_none(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
+    @field_validator("qdrant_path", mode="before")
+    @classmethod
+    def empty_qdrant_path_is_none(cls, value: object) -> object:
         if isinstance(value, str) and not value.strip():
             return None
         return value
