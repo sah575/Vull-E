@@ -49,8 +49,10 @@ new approved pilot baseline, and redeploy.
 
 1. Copy `examples/profiles/bank-a.env.example` to
    `.vulle/profiles/<target>.env`.
-2. Set Jira, Confluence, model, embedding, Qdrant, tenant, environment, and
-   knowledge-base values.
+2. Keep the target's complete runtime configuration in that one profile:
+   Jira, Confluence, LLM, embedding, Qdrant, TLS, tenant, environment, and
+   knowledge-base values. The root `.env` is optional when the profile contains
+   all required values.
 3. Keep `HTTP_VERIFY_SSL=true`.
 4. Set `HTTP_CA_BUNDLE` when the bank uses a private CA or TLS inspection.
 5. Set `JIRA_AUTH_MODE=basic` for email/API-token authentication or

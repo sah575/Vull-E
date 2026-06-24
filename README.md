@@ -51,7 +51,7 @@ cp .env.example .env
 Create it in the development environment, commit it, and use the same file on
 the target device. Update it only as an intentional dependency upgrade.
 
-Edit `.env`:
+For one local target, edit `.env`:
 
 ```bash
 JIRA_BASE_URL=https://jira.example.com
@@ -115,13 +115,50 @@ docker compose up -d qdrant
 
 ## Multiple Targets
 
-Keep shared local AI, embedding, and Qdrant settings in the root `.env`. Store
-Jira and Confluence credentials per target under the git-ignored
+For bank or multi-target use, prefer one complete profile file per target.
+That avoids splitting Jira, Confluence, LLM, embedding, Qdrant, and TLS values
+across several `.env` files. Store profiles under the git-ignored
 `.vulle/profiles/` directory:
 
 ```bash
 mkdir -p .vulle/profiles
 cp examples/profiles/bank-a.env.example .vulle/profiles/bank-a.env
+```
+
+Put the target's full runtime configuration in that profile:
+
+```env
+JIRA_BASE_URL=https://atlas.example.local/jira
+JIRA_EMAIL=your.email@example.com
+JIRA_API_TOKEN=replace-me
+JIRA_AUTH_MODE=bearer
+JIRA_API_VERSION=2
+JIRA_ACCEPTANCE_CRITERIA_FIELD=
+
+CONFLUENCE_BASE_URL=https://atlas.example.local/confluence
+CONFLUENCE_EMAIL=your.email@example.com
+CONFLUENCE_API_TOKEN=
+CONFLUENCE_AUTH_MODE=bearer
+
+HTTP_VERIFY_SSL=true
+HTTP_CA_BUNDLE=/secure/path/bank-ca-chain.pem
+
+LLM_BASE_URL=http://llm.example.local:8000/v1
+LLM_API_KEY=replace-me
+LLM_MODEL=approved-local-model
+
+EMBEDDING_BASE_URL=http://embedding.example.local:8000/v1
+EMBEDDING_API_KEY=replace-me
+EMBEDDING_MODEL=approved-embedding-model
+EMBEDDING_DIMENSIONS=1024
+
+QDRANT_URL=http://127.0.0.1:6333
+QDRANT_API_KEY=
+QDRANT_COLLECTION=vulle_bank_a_knowledge
+
+RAG_TENANT_ID=bank-a
+RAG_ENVIRONMENT=preprod
+RAG_KNOWLEDGE_BASE_ID=bank-a-security-v1
 ```
 
 Use the profile before the command name:
@@ -139,9 +176,9 @@ also supported:
 vulle --profile /secure/configs/bank-a.env doctor
 ```
 
-Profile values override the shared `.env`. A target may override
-`QDRANT_COLLECTION` to isolate its internal knowledge. Do not commit profile
-files because they contain credentials.
+Profile values override the root `.env`. The root `.env` is optional when the
+selected profile contains all required values. Do not commit profile files
+because they contain credentials and internal URLs.
 
 `JIRA_AUTH_MODE`, `JIRA_API_VERSION`, and `JIRA_ACCEPTANCE_CRITERIA_FIELD` are
 profile-specific. Use `JIRA_AUTH_MODE=basic` for email/API-token authentication

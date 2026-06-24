@@ -36,6 +36,44 @@ def test_named_profile_overrides_shared_env(
     get_settings.cache_clear()
 
 
+def test_named_profile_can_contain_complete_runtime_config(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    profile_dir = tmp_path / ".vulle/profiles"
+    profile_dir.mkdir(parents=True)
+    (profile_dir / "bank-a.env").write_text(
+        "JIRA_BASE_URL=https://bank-a.example/jira\n"
+        "JIRA_EMAIL=security@example.com\n"
+        "JIRA_API_TOKEN=test-token\n"
+        "LLM_BASE_URL=http://llm.example/v1\n"
+        "LLM_API_KEY=llm-token\n"
+        "LLM_MODEL=bank-llm\n"
+        "EMBEDDING_BASE_URL=http://embedding.example/v1\n"
+        "EMBEDDING_API_KEY=embedding-token\n"
+        "EMBEDDING_MODEL=bank-embedding\n"
+        "EMBEDDING_DIMENSIONS=768\n"
+        "QDRANT_URL=http://qdrant.example:6333\n"
+        "QDRANT_COLLECTION=bank_a_knowledge\n",
+        encoding="utf-8",
+    )
+    get_settings.cache_clear()
+
+    settings = get_settings("bank-a")
+
+    assert settings.llm_base_url == "http://llm.example/v1"
+    assert settings.llm_api_key == "llm-token"
+    assert settings.llm_model == "bank-llm"
+    assert settings.embedding_base_url == "http://embedding.example/v1"
+    assert settings.embedding_api_key == "embedding-token"
+    assert settings.embedding_model == "bank-embedding"
+    assert settings.embedding_dimensions == 768
+    assert settings.qdrant_url == "http://qdrant.example:6333"
+    assert settings.qdrant_collection == "bank_a_knowledge"
+    get_settings.cache_clear()
+
+
 def test_explicit_profile_path_is_supported() -> None:
     assert resolve_profile_path("configs/target.env") == Path("configs/target.env")
 
