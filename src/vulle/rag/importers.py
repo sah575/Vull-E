@@ -2,10 +2,11 @@ import csv
 import hashlib
 import re
 import shutil
-import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
-from typing import Literal
+from typing import Any, Literal
+
+from defusedxml import ElementTree as ET  # type: ignore[import-untyped]
 
 SourceKind = Literal["owasp-wstg", "owasp-api", "payloads", "mitre-cwe", "mitre-capec"]
 
@@ -504,5 +505,5 @@ def _local_name(tag: str) -> str:
     return tag.rsplit("}", 1)[-1]
 
 
-def _element_text(element: ET.Element) -> str:
+def _element_text(element: Any) -> str:
     return _clean_text(" ".join(text for text in element.itertext() if text.strip()))
