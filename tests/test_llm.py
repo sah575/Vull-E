@@ -67,3 +67,32 @@ def test_valid_llm_response_content_is_returned() -> None:
 
     assert client._request("system", "user") == '{"value":"ok"}'
     assert seen_payload["max_tokens"] == 1234
+
+
+def test_list_llm_response_content_is_joined() -> None:
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "content": [
+                                {"type": "text", "text": '{"value":'},
+                                {"type": "text", "text": '"ok"}'},
+                            ]
+                        }
+                    }
+                ]
+            },
+            request=request,
+        )
+    )
+    client = object.__new__(LLMClient)
+    client._settings = Settings(_env_file=None)
+    client._client = httpx.Client(
+        base_url="http://llm.local/v1",
+        transport=transport,
+    )
+
+    assert client._request("system", "user") == '{"value":"ok"}'

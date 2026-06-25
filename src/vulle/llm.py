@@ -90,9 +90,7 @@ class LLMClient:
             raise ServiceResponseFormatError(
                 "LLM response is missing choices[0].message.content."
             ) from exc
-        if not isinstance(content, str):
-            raise ServiceResponseFormatError("LLM response content must be a string.")
-        return content
+        return _message_content_to_text(content)
 
     @staticmethod
     def _repair_prompt(content: str, schema: type[T], error: Exception) -> str:
@@ -133,3 +131,36 @@ Candidate output:
             ]
             return json.dumps(details, ensure_ascii=False)[:2000]
         return str(error)[:1000]
+
+
+def _message_content_to_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, dict):
+        for key in ("text", "content"):
+            value = content.get(key)
+            if isinstance(value, str):
+                return value
+        raise ServiceResponseFormatError(
+            "LLM response content object is missing a text/content string."
+        )
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict):
+                for key in ("text", "content"):
+                    value = item.get(key)
+                    if isinstance(value, str):
+                        parts.append(value)
+                        break
+        text = "".join(parts).strip()
+        if text:
+            return text
+        raise ServiceResponseFormatError(
+            "LLM response content list does not contain text parts."
+        )
+    raise ServiceResponseFormatError(
+        f"LLM response content must be text-compatible, got {type(content).__name__}."
+    )
