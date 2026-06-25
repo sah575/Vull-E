@@ -85,12 +85,13 @@ class LLMClient:
         raise_for_response(response, service="LLM", endpoint=endpoint)
         payload = response_json(response, service="LLM", endpoint=endpoint)
         try:
-            content = payload["choices"][0]["message"]["content"]  # type: ignore[index]
+            choice = payload["choices"][0]  # type: ignore[index]
+            message = choice["message"]  # type: ignore[index]
         except (KeyError, IndexError, TypeError) as exc:
             raise ServiceResponseFormatError(
-                "LLM response is missing choices[0].message.content."
+                "LLM response is missing choices[0].message."
             ) from exc
-        return _message_content_to_text(content)
+        return _message_to_text(message, choice)
 
     @staticmethod
     def _repair_prompt(content: str, schema: type[T], error: Exception) -> str:
@@ -133,7 +134,39 @@ Candidate output:
         return str(error)[:1000]
 
 
-def _message_content_to_text(content: Any) -> str:
+def _message_to_text(message: Any, choice: Any | None = None) -> str:
+    if not isinstance(message, dict):
+        raise ServiceResponseFormatError(
+            f"LLM response message must be an object, got {type(message).__name__}."
+        )
+    candidates = [
+        message.get("content"),
+        message.get("text"),
+        message.get("reasoning_content"),
+        message.get("reasoning"),
+        message.get("parsed"),
+        choice.get("text") if isinstance(choice, dict) else None,
+    ]
+    for candidate in candidates:
+        text = _message_content_to_text(candidate, allow_empty=True)
+        if text:
+            return text
+    tool_text = _tool_calls_to_text(message.get("tool_calls"))
+    if tool_text:
+        return tool_text
+    message_keys = ", ".join(sorted(str(key) for key in message)) or "none"
+    finish_reason = choice.get("finish_reason") if isinstance(choice, dict) else None
+    raise ServiceResponseFormatError(
+        "LLM response message does not contain text content. "
+        f"message_keys=[{message_keys}], finish_reason={finish_reason!r}."
+    )
+
+
+def _message_content_to_text(content: Any, *, allow_empty: bool = False) -> str:
+    if content is None:
+        if allow_empty:
+            return ""
+        raise ServiceResponseFormatError("LLM response content is null.")
     if isinstance(content, str):
         return content
     if isinstance(content, dict):
@@ -141,6 +174,13 @@ def _message_content_to_text(content: Any) -> str:
             value = content.get(key)
             if isinstance(value, str):
                 return value
+        if content:
+            try:
+                return json.dumps(content, ensure_ascii=False)
+            except TypeError:
+                pass
+        if allow_empty:
+            return ""
         raise ServiceResponseFormatError(
             "LLM response content object is missing a text/content string."
         )
@@ -158,9 +198,29 @@ def _message_content_to_text(content: Any) -> str:
         text = "".join(parts).strip()
         if text:
             return text
+        if allow_empty:
+            return ""
         raise ServiceResponseFormatError(
             "LLM response content list does not contain text parts."
         )
+    if allow_empty:
+        return ""
     raise ServiceResponseFormatError(
         f"LLM response content must be text-compatible, got {type(content).__name__}."
     )
+
+
+def _tool_calls_to_text(tool_calls: Any) -> str:
+    if not isinstance(tool_calls, list):
+        return ""
+    parts: list[str] = []
+    for item in tool_calls:
+        if not isinstance(item, dict):
+            continue
+        function = item.get("function")
+        if not isinstance(function, dict):
+            continue
+        arguments = function.get("arguments")
+        if isinstance(arguments, str):
+            parts.append(arguments)
+    return "".join(parts).strip()

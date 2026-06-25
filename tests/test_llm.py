@@ -96,3 +96,63 @@ def test_list_llm_response_content_is_joined() -> None:
     )
 
     assert client._request("system", "user") == '{"value":"ok"}'
+
+
+def test_null_content_can_use_parsed_message_payload() -> None:
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "content": None,
+                            "parsed": {"value": "ok"},
+                        }
+                    }
+                ]
+            },
+            request=request,
+        )
+    )
+    client = object.__new__(LLMClient)
+    client._settings = Settings(_env_file=None)
+    client._client = httpx.Client(
+        base_url="http://llm.local/v1",
+        transport=transport,
+    )
+
+    assert client._request("system", "user") == '{"value": "ok"}'
+
+
+def test_null_content_can_use_tool_call_arguments() -> None:
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "content": None,
+                            "tool_calls": [
+                                {
+                                    "function": {
+                                        "arguments": '{"value":"ok"}',
+                                    }
+                                }
+                            ],
+                        }
+                    }
+                ]
+            },
+            request=request,
+        )
+    )
+    client = object.__new__(LLMClient)
+    client._settings = Settings(_env_file=None)
+    client._client = httpx.Client(
+        base_url="http://llm.local/v1",
+        transport=transport,
+    )
+
+    assert client._request("system", "user") == '{"value":"ok"}'
