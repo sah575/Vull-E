@@ -24,6 +24,26 @@ def test_complete_json_repairs_invalid_output() -> None:
     assert result.value == "repaired"
 
 
+def test_complete_json_accepts_fenced_json() -> None:
+    client = object.__new__(LLMClient)
+    client._settings = Settings(_env_file=None)
+    client._request = lambda *args, **kwargs: '```json\n{"value": "ok"}\n```'
+
+    result = client.complete_json("system", "user", _Result)
+
+    assert result.value == "ok"
+
+
+def test_complete_json_extracts_json_from_text() -> None:
+    client = object.__new__(LLMClient)
+    client._settings = Settings(_env_file=None)
+    client._request = lambda *args, **kwargs: 'Here is the JSON:\n{"value": "ok"}\nDone.'
+
+    result = client.complete_json("system", "user", _Result)
+
+    assert result.value == "ok"
+
+
 def test_response_format_rejection_is_actionable() -> None:
     transport = httpx.MockTransport(
         lambda request: httpx.Response(

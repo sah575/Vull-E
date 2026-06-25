@@ -142,8 +142,9 @@ Candidate output:
 
     @staticmethod
     def _parse_json_model(content: str, schema: type[T]) -> T:
+        candidate = _extract_json_candidate(content)
         try:
-            payload: dict[str, Any] = json.loads(content)
+            payload: dict[str, Any] = json.loads(candidate)
         except json.JSONDecodeError as exc:
             raise ValueError(
                 f"LLM returned invalid JSON at line {exc.lineno}, column {exc.colno}"
@@ -191,6 +192,53 @@ def _message_to_text(message: Any, choice: Any | None = None) -> str:
         "LLM response message does not contain text content. "
         f"message_keys=[{message_keys}], finish_reason={finish_reason!r}."
     )
+
+
+def _extract_json_candidate(content: str) -> str:
+    text = content.strip()
+    if not text:
+        return text
+    if text.startswith("```"):
+        text = _strip_code_fence(text)
+    if text.startswith("{"):
+        return _balanced_json_object(text) or text
+    first_brace = text.find("{")
+    if first_brace >= 0:
+        return _balanced_json_object(text[first_brace:]) or text[first_brace:]
+    return text
+
+
+def _strip_code_fence(text: str) -> str:
+    lines = text.splitlines()
+    if not lines or not lines[0].lstrip().startswith("```"):
+        return text
+    lines = lines[1:-1] if lines[-1].strip().startswith("```") else lines[1:]
+    return "\n".join(lines).strip()
+
+
+def _balanced_json_object(text: str) -> str | None:
+    depth = 0
+    in_string = False
+    escaped = False
+    for index, char in enumerate(text):
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\" and in_string:
+            escaped = True
+            continue
+        if char == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return text[: index + 1]
+    return None
 
 
 def _message_content_to_text(content: Any, *, allow_empty: bool = False) -> str:
