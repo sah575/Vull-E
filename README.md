@@ -68,6 +68,7 @@ CONFLUENCE_AUTH_MODE=basic
 
 HTTP_VERIFY_SSL=true
 HTTP_CA_BUNDLE=
+VULLE_DEBUG=false
 
 LLM_BASE_URL=http://127.0.0.1:8000/v1
 LLM_API_KEY=local-not-needed
@@ -329,7 +330,13 @@ prompts for a URL. You can also pass one explicitly:
 ```bash
 vulle analyze-jira BANK-123 --confluence-url "https://atlas.example.local/confluence/pages/12345"
 vulle analyze-jira BANK-123 --no-ask-confluence-url
+vulle analyze-jira BANK-123 --debug
 ```
+
+`--debug` prints non-secret diagnostics such as prompt character counts, RAG
+chunk count, Confluence character counts, HTTP status, and response shape. It
+does not print API keys or bearer tokens. The same mode can be enabled with
+`VULLE_DEBUG=true`.
 
 Analyze from a local sample file:
 

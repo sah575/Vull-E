@@ -13,6 +13,8 @@ DEFAULT_PROFILE_DIR = Path(".vulle/profiles")
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file_encoding="utf-8", extra="ignore")
 
+    vulle_debug: bool = False
+
     jira_base_url: str | None = None
     jira_email: str | None = None
     jira_api_token: str | None = None

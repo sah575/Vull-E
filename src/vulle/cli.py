@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -42,6 +43,11 @@ ASK_CONFLUENCE_URL_OPTION = typer.Option(
     "--ask-confluence-url/--no-ask-confluence-url",
     help="Prompt for a Confluence URL when none is discovered automatically.",
 )
+DEBUG_OPTION = typer.Option(
+    False,
+    "--debug",
+    help="Print non-secret diagnostic metrics for Jira analysis and LLM calls.",
+)
 
 
 @app.callback()
@@ -70,9 +76,13 @@ def analyze_jira(
     output: Path | None = None,
     confluence_url: list[str] | None = CONFLUENCE_URL_OPTION,
     ask_confluence_url: bool = ASK_CONFLUENCE_URL_OPTION,
+    debug: bool = DEBUG_OPTION,
 ) -> None:
     """Fetch a Jira issue and analyze it with the local LLM."""
     render_banner(console)
+    if debug:
+        os.environ["VULLE_DEBUG"] = "true"
+        get_settings.cache_clear()
     settings = get_settings()
     jira_client = JiraClient(settings)
     issue = jira_client.get_issue(issue_key)

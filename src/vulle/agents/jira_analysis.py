@@ -151,7 +151,7 @@ def extract_security_signals(state: GraphState) -> dict[str, Any]:
 def analyze_issue(state: GraphState) -> dict[str, Any]:
     settings = get_settings()
     scope = rag_scope(settings)
-    llm = LLMClient(settings)
+    llm = LLMClient(settings, debug_callback=_debug_event if settings.vulle_debug else None)
     schema = JiraSecurityAnalysis.model_json_schema()
     source_catalog = _source_catalog(state)
     evidence_context = _evidence_context(
@@ -200,6 +200,27 @@ Required JSON schema:
 {json.dumps(schema, ensure_ascii=False, separators=(",", ":"))}
 """
     user_prompt = _truncate_prompt(user_prompt, settings.llm_max_prompt_chars)
+    _debug_event(
+        {
+            "event": "analysis_prompt",
+            "issue_key": state.issue.key,
+            "confluence_pages": len(state.confluence_pages),
+            "confluence_chars_total": sum(len(page.body_text) for page in state.confluence_pages),
+            "confluence_chars_sent": sum(
+                min(len(page.body_text), settings.llm_confluence_chars_per_page)
+                for page in state.confluence_pages
+            ),
+            "rag_status": state.rag_status,
+            "rag_chunks": len(state.rag_context),
+            "rag_context_chars": len(rag_context_json),
+            "source_catalog_entries": len(source_catalog),
+            "system_prompt_chars": len(SYSTEM_PROMPT),
+            "user_prompt_chars": len(user_prompt),
+            "llm_max_prompt_chars": settings.llm_max_prompt_chars,
+            "llm_max_tokens": settings.llm_max_tokens,
+        },
+        enabled=settings.vulle_debug,
+    )
     analysis = llm.complete_json(SYSTEM_PROMPT, user_prompt, JiraSecurityAnalysis)
     analysis = _validate_evidence_references(analysis, evidence_context)
     rag_sources = [
@@ -231,6 +252,12 @@ Required JSON schema:
         }
     )
     return {"analysis": analysis}
+
+
+def _debug_event(event: dict[str, Any], *, enabled: bool = True) -> None:
+    if not enabled:
+        return
+    print(f"[vulle-debug] {json.dumps(event, ensure_ascii=False, sort_keys=True)}")
 
 
 def _compact_rag_context(chunks: list[RagChunk], *, max_chars: int) -> list[dict[str, Any]]:

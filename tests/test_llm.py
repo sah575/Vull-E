@@ -45,6 +45,7 @@ def test_response_format_rejection_is_actionable() -> None:
 
 def test_valid_llm_response_content_is_returned() -> None:
     seen_payload = {}
+    debug_events = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         nonlocal seen_payload
@@ -60,6 +61,7 @@ def test_valid_llm_response_content_is_returned() -> None:
     )
     client = object.__new__(LLMClient)
     client._settings = Settings(_env_file=None, llm_max_tokens=1234)
+    client._debug_callback = debug_events.append
     client._client = httpx.Client(
         base_url="http://llm.local/v1",
         transport=transport,
@@ -67,6 +69,11 @@ def test_valid_llm_response_content_is_returned() -> None:
 
     assert client._request("system", "user") == '{"value":"ok"}'
     assert seen_payload["max_tokens"] == 1234
+    assert debug_events[0]["event"] == "llm_request"
+    assert debug_events[0]["total_prompt_chars"] == len("system") + len("user")
+    assert debug_events[1]["event"] == "llm_response"
+    assert debug_events[1]["http_status"] == 200
+    assert "Authorization" not in json.dumps(debug_events)
 
 
 def test_list_llm_response_content_is_joined() -> None:

@@ -1,5 +1,6 @@
 import json
 import time
+from collections.abc import Callable
 from typing import Any, TypeVar
 
 import httpx
@@ -19,8 +20,13 @@ T = TypeVar("T", bound=BaseModel)
 
 
 class LLMClient:
-    def __init__(self, settings: Settings) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        debug_callback: Callable[[dict[str, Any]], None] | None = None,
+    ) -> None:
         self._settings = settings
+        self._debug_callback = debug_callback
         verify = tls_verify(
             verify_ssl=settings.http_verify_ssl,
             ca_bundle=settings.http_ca_bundle,
@@ -57,26 +63,46 @@ class LLMClient:
 
     def _request(self, system: str, user: str, temperature: float | None = None) -> str:
         endpoint = "/chat/completions"
+        effective_temperature = (
+            self._settings.llm_temperature if temperature is None else temperature
+        )
+        request_json = {
+            "model": self._settings.llm_model,
+            "temperature": effective_temperature,
+            "max_tokens": self._settings.llm_max_tokens,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            "response_format": {"type": "json_object"},
+        }
+        self._debug(
+            {
+                "event": "llm_request",
+                "endpoint": endpoint,
+                "model": self._settings.llm_model,
+                "temperature": effective_temperature,
+                "max_tokens": self._settings.llm_max_tokens,
+                "timeout_seconds": self._settings.llm_timeout_seconds,
+                "system_chars": len(system),
+                "user_chars": len(user),
+                "total_prompt_chars": len(system) + len(user),
+                "response_format": "json_object",
+            }
+        )
         try:
-            response = self._client.post(
-                endpoint,
-                json={
-                    "model": self._settings.llm_model,
-                    "temperature": (
-                        self._settings.llm_temperature
-                        if temperature is None
-                        else temperature
-                    ),
-                    "max_tokens": self._settings.llm_max_tokens,
-                    "messages": [
-                        {"role": "system", "content": system},
-                        {"role": "user", "content": user},
-                    ],
-                    "response_format": {"type": "json_object"},
-                },
-            )
+            response = self._client.post(endpoint, json=request_json)
         except httpx.HTTPError as exc:
+            self._debug(
+                {
+                    "event": "llm_transport_error",
+                    "endpoint": endpoint,
+                    "error_type": exc.__class__.__name__,
+                    "error": str(exc)[:500],
+                }
+            )
             raise translate_http_error(exc, service="LLM", endpoint=endpoint) from exc
+        self._debug(_response_debug_event(response, endpoint=endpoint))
         if response.status_code == 400 and "response_format" in response.text.lower():
             raise ServiceCompatibilityError(
                 "LLM endpoint rejected response_format=json_object. "
@@ -92,6 +118,11 @@ class LLMClient:
                 "LLM response is missing choices[0].message."
             ) from exc
         return _message_to_text(message, choice)
+
+    def _debug(self, event: dict[str, Any]) -> None:
+        callback = getattr(self, "_debug_callback", None)
+        if callback is not None:
+            callback(event)
 
     @staticmethod
     def _repair_prompt(content: str, schema: type[T], error: Exception) -> str:
@@ -224,3 +255,37 @@ def _tool_calls_to_text(tool_calls: Any) -> str:
         if isinstance(arguments, str):
             parts.append(arguments)
     return "".join(parts).strip()
+
+
+def _response_debug_event(response: httpx.Response, *, endpoint: str) -> dict[str, Any]:
+    event: dict[str, Any] = {
+        "event": "llm_response",
+        "endpoint": endpoint,
+        "http_status": response.status_code,
+    }
+    try:
+        payload = response.json()
+    except ValueError:
+        event["body_text_prefix"] = response.text[:500]
+        return event
+    if isinstance(payload, dict):
+        event["top_level_keys"] = sorted(str(key) for key in payload)
+        choices = payload.get("choices")
+        if isinstance(choices, list) and choices:
+            choice = choices[0]
+            if isinstance(choice, dict):
+                event["choice_keys"] = sorted(str(key) for key in choice)
+                event["finish_reason"] = choice.get("finish_reason")
+                message = choice.get("message")
+                if isinstance(message, dict):
+                    event["message_keys"] = sorted(str(key) for key in message)
+                    content = message.get("content")
+                    event["content_type"] = type(content).__name__
+                    if isinstance(content, str):
+                        event["content_chars"] = len(content)
+                    elif isinstance(content, list):
+                        event["content_parts"] = len(content)
+        detail = payload.get("message") or payload.get("error")
+        if detail:
+            event["error_detail"] = str(detail)[:700]
+    return event
