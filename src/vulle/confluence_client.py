@@ -69,7 +69,9 @@ class ConfluenceClient:
         )
 
     def get_pages_from_issue(self, issue: JiraIssue) -> list[ConfluencePage]:
-        urls = extract_confluence_urls(issue)
+        return self.get_pages_from_urls(extract_confluence_urls(issue))
+
+    def get_pages_from_urls(self, urls: list[str]) -> list[ConfluencePage]:
         page_ids = []
         for url in urls:
             page_id = extract_page_id(url)
@@ -130,11 +132,20 @@ def extract_confluence_urls(issue: JiraIssue) -> list[str]:
     ]
     text = "\n".join(text_parts)
     candidates = re.findall(r"https?://[^\s<>\]\)\"']+", text)
-    return [
-        url.rstrip(".,;")
-        for url in candidates
-        if "confluence" in url.lower() or "/wiki/" in url
-    ]
+    return filter_confluence_urls(candidates)
+
+
+def filter_confluence_urls(urls: list[str]) -> list[str]:
+    seen: set[str] = set()
+    results: list[str] = []
+    for candidate in urls:
+        url = candidate.rstrip(".,;")
+        if not ("confluence" in url.lower() or "/wiki/" in url):
+            continue
+        if url not in seen:
+            seen.add(url)
+            results.append(url)
+    return results
 
 
 def extract_page_id(url: str) -> str | None:

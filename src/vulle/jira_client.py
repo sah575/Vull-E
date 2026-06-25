@@ -73,6 +73,25 @@ class JiraClient:
             acceptance_criteria_field=self._acceptance_criteria_field,
         )
 
+    def get_remote_links(self, issue_key: str) -> list[str]:
+        endpoint = f"rest/api/{self._api_version}/issue/{issue_key}/remotelink"
+        try:
+            response = self._client.get(endpoint)
+        except httpx.HTTPError as exc:
+            raise translate_http_error(exc, service="Jira", endpoint=endpoint) from exc
+        raise_for_response(response, service="Jira", endpoint=endpoint)
+        payload = response_json(response, service="Jira", endpoint=endpoint)
+        if not isinstance(payload, list):
+            raise ServiceResponseFormatError("Jira remote link response must be a JSON array.")
+        urls: list[str] = []
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            url = _remote_link_url(item)
+            if url:
+                urls.append(url)
+        return urls
+
     def check_connection(self) -> None:
         endpoint = f"rest/api/{self._api_version}/myself"
         try:
@@ -145,6 +164,8 @@ def _adf_to_text(value: Any) -> str | None:
 
 def _walk_adf(node: Any, parts: list[str]) -> None:
     if isinstance(node, dict):
+        for href in _adf_link_hrefs(node):
+            parts.append(href)
         if node.get("type") == "text" and node.get("text"):
             parts.append(node["text"])
         for child in node.get("content", []):
@@ -154,3 +175,33 @@ def _walk_adf(node: Any, parts: list[str]) -> None:
     elif isinstance(node, list):
         for child in node:
             _walk_adf(child, parts)
+
+
+def _adf_link_hrefs(node: dict[str, Any]) -> list[str]:
+    hrefs: list[str] = []
+    attrs = node.get("attrs")
+    if isinstance(attrs, dict):
+        for key in ("href", "url"):
+            value = attrs.get(key)
+            if isinstance(value, str) and value.startswith(("http://", "https://")):
+                hrefs.append(value)
+    for mark in node.get("marks", []) or []:
+        if not isinstance(mark, dict):
+            continue
+        mark_attrs = mark.get("attrs") or {}
+        href = mark_attrs.get("href")
+        if isinstance(href, str) and href.startswith(("http://", "https://")):
+            hrefs.append(href)
+    return hrefs
+
+
+def _remote_link_url(item: dict[str, Any]) -> str | None:
+    obj = item.get("object")
+    if isinstance(obj, dict):
+        url = obj.get("url")
+        if isinstance(url, str):
+            return url
+    url = item.get("url")
+    if isinstance(url, str):
+        return url
+    return None

@@ -1,7 +1,7 @@
 import httpx
 
 from vulle.config import Settings
-from vulle.confluence_client import ConfluenceClient, extract_page_id
+from vulle.confluence_client import ConfluenceClient, extract_page_id, filter_confluence_urls
 
 
 def test_extract_page_id_from_spaces_url() -> None:
@@ -16,6 +16,16 @@ def test_extract_page_id_from_viewpage_query() -> None:
         extract_page_id("https://example.atlassian.net/wiki/pages/viewpage.action?pageId=987654321")
         == "987654321"
     )
+
+
+def test_filter_confluence_urls_deduplicates_and_ignores_other_links() -> None:
+    assert filter_confluence_urls(
+        [
+            "https://atlas.example/confluence/pages/12345,",
+            "https://atlas.example/confluence/pages/12345",
+            "https://example.invalid/page",
+        ]
+    ) == ["https://atlas.example/confluence/pages/12345"]
 
 
 def test_confluence_page_payload_is_parsed() -> None:

@@ -95,6 +95,7 @@ class AnalysisMetadata(BaseModel):
     tenant_id: str
     environment: str
     knowledge_base_id: str
+    confluence_pages_loaded: int = 0
 
 
 class RiskHypothesis(BaseModel):

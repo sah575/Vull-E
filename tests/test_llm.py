@@ -1,3 +1,5 @@
+import json
+
 import httpx
 import pytest
 from pydantic import BaseModel
@@ -42,18 +44,26 @@ def test_response_format_rejection_is_actionable() -> None:
 
 
 def test_valid_llm_response_content_is_returned() -> None:
-    transport = httpx.MockTransport(
-        lambda request: httpx.Response(
+    seen_payload = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal seen_payload
+        seen_payload = json.loads(request.content)
+        return httpx.Response(
             200,
             json={"choices": [{"message": {"content": '{"value":"ok"}'}}]},
             request=request,
         )
+
+    transport = httpx.MockTransport(
+        handler
     )
     client = object.__new__(LLMClient)
-    client._settings = Settings(_env_file=None)
+    client._settings = Settings(_env_file=None, llm_max_tokens=1234)
     client._client = httpx.Client(
         base_url="http://llm.local/v1",
         transport=transport,
     )
 
     assert client._request("system", "user") == '{"value":"ok"}'
+    assert seen_payload["max_tokens"] == 1234

@@ -9,7 +9,11 @@ from rich.console import Console
 from vulle.agents.jira_analysis import analyze_jira_issue
 from vulle.banner import render_banner
 from vulle.config import Settings, get_settings, set_active_profile
-from vulle.confluence_client import ConfluenceClient, extract_confluence_urls
+from vulle.confluence_client import (
+    ConfluenceClient,
+    extract_confluence_urls,
+    filter_confluence_urls,
+)
 from vulle.doctor import run_doctor
 from vulle.errors import VulleError
 from vulle.jira_client import JiraClient, jira_payload_to_issue
@@ -27,6 +31,17 @@ from vulle.rag.service import RagService
 
 app = typer.Typer(help="Vull-E security analysis CLI")
 console = Console()
+CONFLUENCE_URL_OPTION = typer.Option(
+    None,
+    "--confluence-url",
+    "-c",
+    help="Confluence page URL to include when Jira does not expose the link.",
+)
+ASK_CONFLUENCE_URL_OPTION = typer.Option(
+    True,
+    "--ask-confluence-url/--no-ask-confluence-url",
+    help="Prompt for a Confluence URL when none is discovered automatically.",
+)
 
 
 @app.callback()
@@ -50,12 +65,24 @@ def main(
 
 
 @app.command("analyze-jira")
-def analyze_jira(issue_key: str, output: Path | None = None) -> None:
+def analyze_jira(
+    issue_key: str,
+    output: Path | None = None,
+    confluence_url: list[str] | None = CONFLUENCE_URL_OPTION,
+    ask_confluence_url: bool = ASK_CONFLUENCE_URL_OPTION,
+) -> None:
     """Fetch a Jira issue and analyze it with the local LLM."""
     render_banner(console)
     settings = get_settings()
-    issue = JiraClient(settings).get_issue(issue_key)
-    confluence_pages = _load_confluence_pages(issue, settings)
+    jira_client = JiraClient(settings)
+    issue = jira_client.get_issue(issue_key)
+    confluence_pages = _load_confluence_pages(
+        issue,
+        settings,
+        jira_client=jira_client,
+        manual_urls=confluence_url or [],
+        ask_for_url=ask_confluence_url,
+    )
     analysis = analyze_jira_issue(issue, confluence_pages)
     _emit_json(analysis.model_dump(), output)
 
@@ -242,12 +269,37 @@ def _issue_from_file_payload(payload: dict[str, Any]) -> JiraIssue:
 def _load_confluence_pages(
     issue: JiraIssue,
     settings: Settings,
+    *,
+    jira_client: JiraClient | None = None,
+    manual_urls: list[str] | None = None,
+    ask_for_url: bool = False,
 ) -> list[ConfluencePage]:
     urls = extract_confluence_urls(issue)
+    if jira_client is not None:
+        try:
+            urls.extend(jira_client.get_remote_links(issue.key))
+        except (httpx.HTTPError, VulleError) as exc:
+            console.print(f"[yellow]Jira remote links could not be loaded: {exc}[/yellow]")
+    if manual_urls:
+        urls.extend(manual_urls)
+    urls = filter_confluence_urls(urls)
+    if not urls and ask_for_url:
+        console.print("[yellow]No Confluence link was discovered from Jira.[/yellow]")
+        try:
+            manual_url = typer.prompt(
+                "Confluence URL gir (boş bırak geç)",
+                default="",
+                show_default=False,
+            ).strip()
+        except (EOFError, KeyboardInterrupt):
+            manual_url = ""
+        if manual_url:
+            urls = filter_confluence_urls([manual_url])
     if not urls:
+        console.print("[yellow]No Confluence page will be included in this analysis.[/yellow]")
         return []
     try:
-        pages = ConfluenceClient(settings).get_pages_from_issue(issue)
+        pages = ConfluenceClient(settings).get_pages_from_urls(urls)
     except ValueError:
         console.print(
             "[yellow]Confluence link found, but Confluence credentials "
@@ -259,6 +311,11 @@ def _load_confluence_pages(
         return []
     if pages:
         console.print(f"[cyan]Loaded {len(pages)} Confluence page(s) from Jira links.[/cyan]")
+    else:
+        console.print(
+            "[yellow]Confluence URLs were found, "
+            "but no loadable page ID was detected.[/yellow]"
+        )
     return pages
 
 

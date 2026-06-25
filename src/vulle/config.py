@@ -31,6 +31,11 @@ class Settings(BaseSettings):
     llm_temperature: float = Field(default=0.1, ge=0.0, le=2.0)
     llm_json_repair_attempts: int = Field(default=1, ge=0, le=3)
     llm_http_retries: int = Field(default=2, ge=0, le=5)
+    llm_timeout_seconds: int = Field(default=120, gt=0)
+    llm_max_tokens: int = Field(default=4096, gt=0)
+    llm_max_prompt_chars: int = Field(default=45000, gt=10000)
+    llm_rag_context_chars: int = Field(default=12000, gt=1000)
+    llm_confluence_chars_per_page: int = Field(default=6000, gt=1000)
     pii_redaction_mode: Literal["off", "mask"] = "off"
     http_verify_ssl: bool = True
     http_ca_bundle: Path | None = None

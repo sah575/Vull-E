@@ -72,6 +72,11 @@ HTTP_CA_BUNDLE=
 LLM_BASE_URL=http://127.0.0.1:8000/v1
 LLM_API_KEY=local-not-needed
 LLM_MODEL=gpt-oss-120b
+LLM_TIMEOUT_SECONDS=120
+LLM_MAX_TOKENS=4096
+LLM_MAX_PROMPT_CHARS=45000
+LLM_RAG_CONTEXT_CHARS=12000
+LLM_CONFLUENCE_CHARS_PER_PAGE=6000
 PII_REDACTION_MODE=off
 
 EMBEDDING_BASE_URL=http://127.0.0.1:8000/v1
@@ -177,6 +182,9 @@ HTTP_CA_BUNDLE=/secure/path/bank-ca-chain.pem
 LLM_BASE_URL=http://llm.example.local:8000/v1
 LLM_API_KEY=replace-me
 LLM_MODEL=approved-local-model
+LLM_TIMEOUT_SECONDS=120
+LLM_MAX_TOKENS=4096
+LLM_MAX_PROMPT_CHARS=45000
 
 EMBEDDING_BASE_URL=http://embedding.example.local:8000/v1
 EMBEDDING_API_KEY=replace-me
@@ -312,6 +320,15 @@ Analyze a live Jira issue:
 
 ```bash
 vulle analyze-jira BANK-123
+```
+
+Vull-E tries to load Confluence links from Jira description, comments, ADF link
+attributes, and Jira remote links. If no Confluence link is discovered, the CLI
+prompts for a URL. You can also pass one explicitly:
+
+```bash
+vulle analyze-jira BANK-123 --confluence-url "https://atlas.example.local/confluence/pages/12345"
+vulle analyze-jira BANK-123 --no-ask-confluence-url
 ```
 
 Analyze from a local sample file:

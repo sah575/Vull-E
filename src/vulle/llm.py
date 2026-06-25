@@ -28,7 +28,7 @@ class LLMClient:
         self._client = httpx.Client(
             base_url=settings.llm_base_url.rstrip("/"),
             headers={"Authorization": f"Bearer {settings.llm_api_key}"},
-            timeout=120,
+            timeout=settings.llm_timeout_seconds,
             transport=httpx.HTTPTransport(
                 retries=settings.llm_http_retries,
                 verify=verify,
@@ -67,6 +67,7 @@ class LLMClient:
                         if temperature is None
                         else temperature
                     ),
+                    "max_tokens": self._settings.llm_max_tokens,
                     "messages": [
                         {"role": "system", "content": system},
                         {"role": "user", "content": user},
