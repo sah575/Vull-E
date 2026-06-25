@@ -152,7 +152,6 @@ def analyze_issue(state: GraphState) -> dict[str, Any]:
     settings = get_settings()
     scope = rag_scope(settings)
     llm = LLMClient(settings, debug_callback=_debug_event if settings.vulle_debug else None)
-    schema = JiraSecurityAnalysis.model_json_schema()
     source_catalog = _source_catalog(state)
     evidence_context = _evidence_context(
         state,
@@ -196,8 +195,8 @@ Allowed evidence source IDs:
 RAG retrieval status:
 {rag_status_json}
 
-Required JSON schema:
-{json.dumps(schema, ensure_ascii=False, separators=(",", ":"))}
+Required output:
+{_compact_output_contract()}
 """
     user_prompt = _truncate_prompt(user_prompt, settings.llm_max_prompt_chars)
     _debug_event(
@@ -266,30 +265,63 @@ def _compact_rag_context(chunks: list[RagChunk], *, max_chars: int) -> list[dict
     for chunk in chunks:
         if remaining <= 0:
             break
-        text = _truncate_text(chunk.text, min(remaining, 2000))
-        remaining -= len(text)
-        compact.append(
-            {
-                "id": chunk.id,
-                "source": chunk.source,
-                "title": chunk.title,
-                "text": text,
-                "score": chunk.score,
-                "metadata": {
-                    key: value
-                    for key, value in chunk.metadata.items()
-                    if key
-                    in {
-                        "source_type",
-                        "source_priority",
-                        "control_areas",
-                        "section",
-                        "retrieval",
-                    }
-                },
-            }
-        )
+        item = _compact_rag_chunk(chunk, text_chars=min(remaining, 1200))
+        encoded = json.dumps(item, ensure_ascii=False, separators=(",", ":"))
+        if len(encoded) > remaining and compact:
+            break
+        if len(encoded) > remaining:
+            item = _compact_rag_chunk(chunk, text_chars=max(200, remaining - 300))
+            encoded = json.dumps(item, ensure_ascii=False, separators=(",", ":"))
+        compact.append(item)
+        remaining -= len(encoded)
     return compact
+
+
+def _compact_rag_chunk(chunk: RagChunk, *, text_chars: int) -> dict[str, Any]:
+    return {
+        "id": chunk.id,
+        "source": chunk.source,
+        "title": chunk.title,
+        "text": _truncate_text(chunk.text, text_chars),
+        "score": chunk.score,
+        "source_type": chunk.metadata.get("source_type"),
+        "control_areas": chunk.metadata.get("control_areas", []),
+    }
+
+
+def _compact_output_contract() -> str:
+    return """Return only one valid JSON object. Do not use markdown.
+Required top-level keys:
+- issue_key: string
+- change_summary: string
+- business_flows: string[]
+- assets_or_entry_points: string[]
+- trust_boundaries: string[]
+- risk_hypotheses: array, maximum 3
+- test_ideas: array, maximum 4
+- missing_information: string[]
+- recommended_next_steps: string[]
+
+Each risk_hypotheses item:
+{"title": string, "vulnerability_class": string, "rationale": string,
+"likely_entry_points": string[], "affected_roles": string[],
+"confidence": "low"|"medium"|"high", "confidence_reason": string,
+"severity_hint": "info"|"low"|"medium"|"high"|"critical",
+"supporting_evidence": EvidenceReference[], "assumptions": string[]}
+
+Each test_ideas item:
+{"title": string, "objective": string, "preconditions": string[],
+"steps": string[], "expected_secure_behavior": string,
+"evidence_to_collect": string[], "safety_notes": string[],
+"supporting_evidence": EvidenceReference[], "assumptions": string[]}
+
+EvidenceReference:
+{"source_id": one of the allowed source IDs, "evidence_quote": short exact quote
+from that source, "evidence_type": "system_fact"|"business_requirement"|
+"security_policy"|"security_guidance"|"past_finding"|"assumption",
+"relevance": string}
+
+If evidence is weak, keep confidence low and put unknowns in missing_information."""
 
 
 def _truncate_text(value: str | None, max_chars: int) -> str:

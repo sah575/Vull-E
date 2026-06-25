@@ -76,12 +76,15 @@ class LLMClient:
             ],
             "response_format": {"type": "json_object"},
         }
+        if self._settings.llm_reasoning_effort is not None:
+            request_json["reasoning_effort"] = self._settings.llm_reasoning_effort
         self._debug(
             {
                 "event": "llm_request",
                 "endpoint": endpoint,
                 "model": self._settings.llm_model,
                 "temperature": effective_temperature,
+                "reasoning_effort": self._settings.llm_reasoning_effort,
                 "max_tokens": self._settings.llm_max_tokens,
                 "timeout_seconds": self._settings.llm_timeout_seconds,
                 "system_chars": len(system),

@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     llm_max_prompt_chars: int = Field(default=45000, gt=10000)
     llm_rag_context_chars: int = Field(default=12000, gt=1000)
     llm_confluence_chars_per_page: int = Field(default=6000, gt=1000)
+    llm_reasoning_effort: Literal["low", "medium", "high"] | None = None
     pii_redaction_mode: Literal["off", "mask"] = "off"
     http_verify_ssl: bool = True
     http_ca_bundle: Path | None = None
