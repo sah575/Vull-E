@@ -44,6 +44,49 @@ def test_complete_json_extracts_json_from_text() -> None:
     assert result.value == "ok"
 
 
+def test_invalid_json_debug_includes_limited_preview() -> None:
+    debug_events = []
+    client = object.__new__(LLMClient)
+    client._settings = Settings(_env_file=None, llm_json_repair_attempts=0)
+    client._debug_callback = debug_events.append
+    client._request = lambda *args, **kwargs: "not json"
+
+    with pytest.raises(ValueError, match="content_chars=8"):
+        client.complete_json("system", "user", _Result)
+
+    assert debug_events[-1]["event"] == "llm_json_parse_failed"
+    assert debug_events[-1]["content_prefix"] == "not json"
+
+
+def test_reasoning_without_json_is_not_used_as_content() -> None:
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {
+                            "content": None,
+                            "reasoning_content": "I should produce a JSON object.",
+                            "parsed": {"value": "ok"},
+                        },
+                    }
+                ]
+            },
+            request=request,
+        )
+    )
+    client = object.__new__(LLMClient)
+    client._settings = Settings(_env_file=None)
+    client._client = httpx.Client(
+        base_url="http://llm.local/v1",
+        transport=transport,
+    )
+
+    assert client._request("system", "user") == '{"value": "ok"}'
+
+
 def test_response_format_rejection_is_actionable() -> None:
     transport = httpx.MockTransport(
         lambda request: httpx.Response(

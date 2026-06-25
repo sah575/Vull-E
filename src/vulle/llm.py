@@ -140,14 +140,26 @@ Candidate output:
 {content[:20000]}
 """
 
-    @staticmethod
-    def _parse_json_model(content: str, schema: type[T]) -> T:
+    def _parse_json_model(self, content: str, schema: type[T]) -> T:
         candidate = _extract_json_candidate(content)
         try:
             payload: dict[str, Any] = json.loads(candidate)
         except json.JSONDecodeError as exc:
+            self._debug(
+                {
+                    "event": "llm_json_parse_failed",
+                    "error": exc.msg,
+                    "line": exc.lineno,
+                    "column": exc.colno,
+                    "content_chars": len(content),
+                    "candidate_chars": len(candidate),
+                    "content_prefix": _preview_text(content),
+                    "candidate_prefix": _preview_text(candidate),
+                }
+            )
             raise ValueError(
-                f"LLM returned invalid JSON at line {exc.lineno}, column {exc.colno}"
+                f"LLM returned invalid JSON at line {exc.lineno}, column {exc.colno}; "
+                f"content_chars={len(content)}, candidate_chars={len(candidate)}"
             ) from exc
         return schema.model_validate(payload)
 
@@ -172,15 +184,17 @@ def _message_to_text(message: Any, choice: Any | None = None) -> str:
             f"LLM response message must be an object, got {type(message).__name__}."
         )
     candidates = [
-        message.get("content"),
-        message.get("text"),
-        message.get("reasoning_content"),
-        message.get("reasoning"),
-        message.get("parsed"),
-        choice.get("text") if isinstance(choice, dict) else None,
+        ("content", message.get("content")),
+        ("text", message.get("text")),
+        ("parsed", message.get("parsed")),
+        ("choice_text", choice.get("text") if isinstance(choice, dict) else None),
+        ("reasoning_content", message.get("reasoning_content")),
+        ("reasoning", message.get("reasoning")),
     ]
-    for candidate in candidates:
+    for name, candidate in candidates:
         text = _message_content_to_text(candidate, allow_empty=True)
+        if name in {"reasoning_content", "reasoning"} and not _contains_json_object(text):
+            continue
         if text:
             return text
     tool_text = _tool_calls_to_text(message.get("tool_calls"))
@@ -206,6 +220,17 @@ def _extract_json_candidate(content: str) -> str:
     if first_brace >= 0:
         return _balanced_json_object(text[first_brace:]) or text[first_brace:]
     return text
+
+
+def _contains_json_object(text: str) -> bool:
+    return "{" in text and "}" in text
+
+
+def _preview_text(text: str, *, limit: int = 700) -> str:
+    normalized = text.replace("\r", "\\r").replace("\n", "\\n").replace("\t", "\\t")
+    if len(normalized) <= limit:
+        return normalized
+    return f"{normalized[:limit]}...[truncated]"
 
 
 def _strip_code_fence(text: str) -> str:
