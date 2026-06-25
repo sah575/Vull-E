@@ -5,7 +5,7 @@ import pytest
 from pydantic import BaseModel
 
 from vulle.config import Settings
-from vulle.errors import ServiceCompatibilityError
+from vulle.errors import ServiceCompatibilityError, ServiceResponseFormatError
 from vulle.llm import LLMClient
 
 
@@ -137,6 +137,58 @@ def test_valid_llm_response_content_is_returned() -> None:
     assert debug_events[1]["event"] == "llm_response"
     assert debug_events[1]["http_status"] == 200
     assert "Authorization" not in json.dumps(debug_events)
+
+
+def test_gpt_oss_defaults_reasoning_effort_to_low() -> None:
+    seen_payload = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal seen_payload
+        seen_payload = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": '{"value":"ok"}'}}]},
+            request=request,
+        )
+
+    client = object.__new__(LLMClient)
+    client._settings = Settings(_env_file=None, llm_model="openai/gpt-oss-120b")
+    client._client = httpx.Client(
+        base_url="http://llm.local/v1",
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert client._request("system", "user") == '{"value":"ok"}'
+    assert seen_payload["reasoning_effort"] == "low"
+
+
+def test_length_finish_reason_is_actionable() -> None:
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "finish_reason": "length",
+                        "message": {
+                            "content": None,
+                            "reasoning_content": "thinking without final answer",
+                        },
+                    }
+                ]
+            },
+            request=request,
+        )
+    )
+    client = object.__new__(LLMClient)
+    client._settings = Settings(_env_file=None)
+    client._client = httpx.Client(
+        base_url="http://llm.local/v1",
+        transport=transport,
+    )
+
+    with pytest.raises(ServiceResponseFormatError, match="max_tokens was exhausted"):
+        client._request("system", "user")
 
 
 def test_list_llm_response_content_is_joined() -> None:

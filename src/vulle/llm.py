@@ -66,6 +66,10 @@ class LLMClient:
         effective_temperature = (
             self._settings.llm_temperature if temperature is None else temperature
         )
+        reasoning_effort = _effective_reasoning_effort(
+            self._settings.llm_model,
+            self._settings.llm_reasoning_effort,
+        )
         request_json = {
             "model": self._settings.llm_model,
             "temperature": effective_temperature,
@@ -76,15 +80,15 @@ class LLMClient:
             ],
             "response_format": {"type": "json_object"},
         }
-        if self._settings.llm_reasoning_effort is not None:
-            request_json["reasoning_effort"] = self._settings.llm_reasoning_effort
+        if reasoning_effort is not None:
+            request_json["reasoning_effort"] = reasoning_effort
         self._debug(
             {
                 "event": "llm_request",
                 "endpoint": endpoint,
                 "model": self._settings.llm_model,
                 "temperature": effective_temperature,
-                "reasoning_effort": self._settings.llm_reasoning_effort,
+                "reasoning_effort": reasoning_effort,
                 "max_tokens": self._settings.llm_max_tokens,
                 "timeout_seconds": self._settings.llm_timeout_seconds,
                 "system_chars": len(system),
@@ -205,10 +209,28 @@ def _message_to_text(message: Any, choice: Any | None = None) -> str:
         return tool_text
     message_keys = ", ".join(sorted(str(key) for key in message)) or "none"
     finish_reason = choice.get("finish_reason") if isinstance(choice, dict) else None
+    if finish_reason == "length":
+        raise ServiceResponseFormatError(
+            "LLM response ended because max_tokens was exhausted before final JSON "
+            "content was produced. Increase LLM_MAX_TOKENS, reduce prompt/context "
+            "limits, or set LLM_REASONING_EFFORT=low. "
+            f"message_keys=[{message_keys}], finish_reason='length'."
+        )
     raise ServiceResponseFormatError(
         "LLM response message does not contain text content. "
         f"message_keys=[{message_keys}], finish_reason={finish_reason!r}."
     )
+
+
+def _effective_reasoning_effort(
+    model: str,
+    configured: str | None,
+) -> str | None:
+    if configured is not None:
+        return configured
+    if "gpt-oss" in model.lower():
+        return "low"
+    return None
 
 
 def _extract_json_candidate(content: str) -> str:
