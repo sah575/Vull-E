@@ -112,7 +112,7 @@ class LLMClient:
         payload = response_json(response, service="LLM", endpoint=endpoint)
         try:
             choice = payload["choices"][0]  # type: ignore[index]
-            message = choice["message"]  # type: ignore[index]
+            message = choice["message"]
         except (KeyError, IndexError, TypeError) as exc:
             raise ServiceResponseFormatError(
                 "LLM response is missing choices[0].message."
