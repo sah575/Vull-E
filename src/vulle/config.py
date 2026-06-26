@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file_encoding="utf-8", extra="ignore")
 
     vulle_debug: bool = False
+    vulle_audit_log: Path | None = None
 
     jira_base_url: str | None = None
     jira_email: str | None = None
@@ -83,6 +84,13 @@ class Settings(BaseSettings):
     @field_validator("qdrant_path", mode="before")
     @classmethod
     def empty_qdrant_path_is_none(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
+    @field_validator("vulle_audit_log", mode="before")
+    @classmethod
+    def empty_audit_log_is_none(cls, value: object) -> object:
         if isinstance(value, str) and not value.strip():
             return None
         return value

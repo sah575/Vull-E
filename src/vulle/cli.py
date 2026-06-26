@@ -48,6 +48,11 @@ DEBUG_OPTION = typer.Option(
     "--debug",
     help="Print non-secret diagnostic metrics for Jira analysis and LLM calls.",
 )
+AUDIT_LOG_OPTION = typer.Option(
+    None,
+    "--audit-log",
+    help="Write non-secret structured JSONL audit events to this file.",
+)
 
 
 @app.callback()
@@ -77,11 +82,15 @@ def analyze_jira(
     confluence_url: list[str] | None = CONFLUENCE_URL_OPTION,
     ask_confluence_url: bool = ASK_CONFLUENCE_URL_OPTION,
     debug: bool = DEBUG_OPTION,
+    audit_log: Path | None = AUDIT_LOG_OPTION,
 ) -> None:
     """Fetch a Jira issue and analyze it with the local LLM."""
     render_banner(console)
     if debug:
         os.environ["VULLE_DEBUG"] = "true"
+        get_settings.cache_clear()
+    if audit_log:
+        os.environ["VULLE_AUDIT_LOG"] = str(audit_log)
         get_settings.cache_clear()
     settings = get_settings()
     jira_client = JiraClient(settings)

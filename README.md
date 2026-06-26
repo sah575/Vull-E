@@ -69,6 +69,7 @@ CONFLUENCE_AUTH_MODE=basic
 HTTP_VERIFY_SSL=true
 HTTP_CA_BUNDLE=
 VULLE_DEBUG=false
+VULLE_AUDIT_LOG=
 
 LLM_BASE_URL=http://127.0.0.1:8000/v1
 LLM_API_KEY=local-not-needed
@@ -333,12 +334,17 @@ prompts for a URL. You can also pass one explicitly:
 vulle analyze-jira BANK-123 --confluence-url "https://atlas.example.local/confluence/pages/12345"
 vulle analyze-jira BANK-123 --no-ask-confluence-url
 vulle analyze-jira BANK-123 --debug
+vulle analyze-jira BANK-123 --audit-log .vulle/audit/vulle-audit.jsonl
 ```
 
 `--debug` prints non-secret diagnostics such as prompt character counts, RAG
 chunk count, Confluence character counts, HTTP status, and response shape. It
 does not print API keys or bearer tokens. The same mode can be enabled with
 `VULLE_DEBUG=true`.
+
+`--audit-log` writes the same non-secret diagnostics as JSONL for later
+troubleshooting and pilot evidence. Secret-like keys and values are redacted
+before writing. The same mode can be enabled with `VULLE_AUDIT_LOG`.
 
 Analyze from a local sample file:
 
@@ -509,8 +515,10 @@ CLI
       -> normalize issue
       -> retrieve Qdrant RAG context
       -> extract security signals
+      -> summarize evidence
       -> threat model
       -> test plan
+      -> validate evidence and assemble metadata
       -> final structured report
 ```
 

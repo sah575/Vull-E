@@ -148,4 +148,7 @@ class GraphState(BaseModel):
     rag_error: str | None = None
     normalized_issue: dict[str, Any] = Field(default_factory=dict)
     security_signals: dict[str, Any] = Field(default_factory=dict)
+    evidence_brief: dict[str, Any] = Field(default_factory=dict)
+    risk_hypotheses: list[RiskHypothesis] = Field(default_factory=list)
+    test_ideas: list[TestIdea] = Field(default_factory=list)
     analysis: JiraSecurityAnalysis | None = None
