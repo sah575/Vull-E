@@ -25,6 +25,8 @@ from vulle.rag.importers import (
     import_mitre_capec,
     import_mitre_cwe,
     import_owasp_api,
+    import_owasp_mastg,
+    import_owasp_masvs,
     import_owasp_wstg,
     import_payloads,
 )
@@ -197,6 +199,26 @@ def rag_import_owasp_api(
 ) -> None:
     """Normalize OWASP API Security markdown into generated RAG knowledge."""
     _emit_import_report(import_owasp_api(source, output_root), output)
+
+
+@app.command("rag-import-owasp-masvs")
+def rag_import_owasp_masvs(
+    source: Path,
+    output_root: Path = Path("docs/knowledge/generated"),
+    output: Path | None = None,
+) -> None:
+    """Normalize OWASP MASVS mobile security standard markdown."""
+    _emit_import_report(import_owasp_masvs(source, output_root), output)
+
+
+@app.command("rag-import-owasp-mastg")
+def rag_import_owasp_mastg(
+    source: Path,
+    output_root: Path = Path("docs/knowledge/generated"),
+    output: Path | None = None,
+) -> None:
+    """Normalize selected OWASP MASTG mobile testing markdown."""
+    _emit_import_report(import_owasp_mastg(source, output_root), output)
 
 
 @app.command("rag-import-payloads")

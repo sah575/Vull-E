@@ -8,7 +8,15 @@ from typing import Any, Literal
 
 from defusedxml import ElementTree as ET  # type: ignore[import-untyped]
 
-SourceKind = Literal["owasp-wstg", "owasp-api", "payloads", "mitre-cwe", "mitre-capec"]
+SourceKind = Literal[
+    "owasp-wstg",
+    "owasp-api",
+    "owasp-masvs",
+    "owasp-mastg",
+    "payloads",
+    "mitre-cwe",
+    "mitre-capec",
+]
 
 
 @dataclass
@@ -56,6 +64,22 @@ OWASP_WSTG_PATTERNS = [
 OWASP_API_PATTERNS = [
     "editions/2023/en/**/*.md",
     "docs/**/*.md",
+]
+OWASP_MASVS_PATTERNS = [
+    "Document/*.md",
+    "controls/*.md",
+]
+OWASP_MASTG_PATTERNS = [
+    "Document/*.md",
+    "knowledge/**/*.md",
+    "tests/**/*.md",
+    "tests-beta/**/*.md",
+    "techniques/**/*.md",
+    "best-practices/**/*.md",
+    "tools/android/**/*.md",
+    "tools/ios/**/*.md",
+    "tools/network/**/*.md",
+    "prerequisites/**/*.md",
 ]
 PAYLOADS_PATTERNS = [
     "**/SQL Injection/**/*.md",
@@ -128,6 +152,30 @@ def import_owasp_api(source: Path, output_root: Path) -> ImportReport:
         source_label="OWASP API Security",
         allow_patterns=OWASP_API_PATTERNS,
         source_url="https://github.com/OWASP/API-Security",
+        license_note="CC-BY-SA-4.0",
+    )
+
+
+def import_owasp_masvs(source: Path, output_root: Path) -> ImportReport:
+    return _import_markdown_tree(
+        source=source,
+        output_root=output_root,
+        source_kind="owasp-masvs",
+        source_label="OWASP MASVS",
+        allow_patterns=OWASP_MASVS_PATTERNS,
+        source_url="https://github.com/OWASP/owasp-masvs",
+        license_note="CC-BY-SA-4.0",
+    )
+
+
+def import_owasp_mastg(source: Path, output_root: Path) -> ImportReport:
+    return _import_markdown_tree(
+        source=source,
+        output_root=output_root,
+        source_kind="owasp-mastg",
+        source_label="OWASP MASTG",
+        allow_patterns=OWASP_MASTG_PATTERNS,
+        source_url="https://github.com/OWASP/owasp-mastg",
         license_note="CC-BY-SA-4.0",
     )
 

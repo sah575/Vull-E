@@ -260,6 +260,8 @@ knowledge, for example under `external_sources/`:
 ```bash
 git clone https://github.com/OWASP/wstg.git external_sources/owasp-wstg
 git clone https://github.com/OWASP/API-Security.git external_sources/owasp-api-security
+git clone https://github.com/OWASP/owasp-masvs.git external_sources/owasp-masvs
+git clone https://github.com/OWASP/owasp-mastg.git external_sources/owasp-mastg
 git clone https://github.com/swisskyrepo/PayloadsAllTheThings.git external_sources/payloadsallthethings
 ```
 
@@ -268,6 +270,8 @@ Generate normalized RAG documents:
 ```bash
 vulle rag-import-owasp-wstg external_sources/owasp-wstg
 vulle rag-import-owasp-api external_sources/owasp-api-security
+vulle rag-import-owasp-masvs external_sources/owasp-masvs
+vulle rag-import-owasp-mastg external_sources/owasp-mastg
 vulle rag-import-payloads external_sources/payloadsallthethings
 vulle rag-import-mitre-cwe external_sources/mitre/cwe.csv
 vulle rag-import-mitre-capec external_sources/mitre/capec.xml
