@@ -646,8 +646,25 @@ def _quote_is_valid(evidence_quote: str, source_text: str) -> bool:
     normalized_quote = _normalize_quote(evidence_quote)
     if len(normalized_quote.split()) < 5 or len(normalized_quote) > 500:
         return False
-    normalized_source = _normalize_quote(source_text)
-    return normalized_quote in normalized_source
+    for segment in _evidence_segments(source_text):
+        if normalized_quote in _normalize_quote(segment):
+            return True
+    return False
+
+
+def _evidence_segments(source_text: str) -> list[str]:
+    candidates: list[str] = []
+    for paragraph in re.split(r"\n\s*\n+", source_text):
+        stripped = paragraph.strip()
+        if not stripped:
+            continue
+        candidates.append(stripped)
+        candidates.extend(
+            part.strip()
+            for part in re.split(r"(?<=[.!?。！？])\s+|\n+", stripped)
+            if part.strip()
+        )
+    return candidates
 
 
 def _normalize_quote(value: str) -> str:

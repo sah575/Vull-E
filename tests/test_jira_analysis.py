@@ -1,5 +1,6 @@
 from vulle.agents.jira_analysis import (
     _evidence_context,
+    _quote_is_valid,
     _validate_evidence_references,
 )
 from vulle.models import (
@@ -142,6 +143,30 @@ def test_short_evidence_quote_is_rejected() -> None:
 
     assert validated.risk_hypotheses[0].supporting_evidence == []
     assert validated.risk_hypotheses[0].confidence == "low"
+
+
+def test_quote_combined_from_separate_paragraphs_is_rejected() -> None:
+    source_text = (
+        "Checker users approve documents for their assigned branch.\n\n"
+        "The approval endpoint records the acting checker identity."
+    )
+
+    assert not _quote_is_valid(
+        "Checker users approve documents for the acting checker identity",
+        source_text,
+    )
+
+
+def test_quote_within_single_paragraph_is_valid() -> None:
+    source_text = (
+        "Checker users approve documents for their assigned branch. "
+        "The approval endpoint records the acting checker identity."
+    )
+
+    assert _quote_is_valid(
+        "The approval endpoint records the acting checker identity",
+        source_text,
+    )
 
 
 def test_system_fact_plus_policy_and_endpoint_can_produce_high_confidence() -> None:
