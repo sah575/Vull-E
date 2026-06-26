@@ -5,6 +5,8 @@ from pathlib import Path
 from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
+import yaml  # type: ignore[import-untyped]
+
 DEFAULT_CONFIG_PATH = Path("config/hacktricks_sources.yml")
 HACKTRICKS_SOURCE_TYPE = "external_pentest_methodology"
 HACKTRICKS_SOURCE_NAME = "hacktricks"
@@ -132,7 +134,7 @@ def load_hacktricks_config(path: Path = DEFAULT_CONFIG_PATH) -> HackTricksConfig
     config = HackTricksConfig()
     if not path.is_file():
         return config
-    raw = _parse_simple_yaml(path.read_text(encoding="utf-8"))
+    raw = _parse_yaml_mapping(path)
     if "enabled" in raw:
         config.enabled = _as_bool(raw["enabled"])
     if "allow_path_patterns" in raw:
@@ -415,55 +417,16 @@ def _title_for(relative_path: str, text: str) -> str:
     return Path(relative_path).stem.replace("-", " ").title()
 
 
-def _parse_simple_yaml(text: str) -> dict[str, Any]:
-    result: dict[str, Any] = {}
-    current_list: str | None = None
-    current_mapping: str | None = None
-    current_nested_list: str | None = None
-    for raw_line in text.splitlines():
-        if not raw_line.strip() or raw_line.lstrip().startswith("#"):
-            continue
-        indent = len(raw_line) - len(raw_line.lstrip(" "))
-        line = raw_line.strip()
-        if indent == 0 and line.endswith(":"):
-            key = line[:-1]
-            result[key] = []
-            current_list = key
-            current_mapping = key if key == "security_domain_mappings" else None
-            current_nested_list = None
-            if current_mapping:
-                result[key] = {}
-            continue
-        if indent == 0 and ":" in line:
-            key, value = line.split(":", 1)
-            result[key.strip()] = _scalar(value.strip())
-            current_list = None
-            current_mapping = None
-            current_nested_list = None
-            continue
-        if current_mapping and indent == 2 and line.endswith(":"):
-            current_nested_list = line[:-1]
-            result[current_mapping][current_nested_list] = []
-            continue
-        if line.startswith("- "):
-            value = _scalar(line[2:].strip())
-            if current_mapping and current_nested_list:
-                result[current_mapping][current_nested_list].append(value)
-            elif current_list:
-                result[current_list].append(value)
-    return result
-
-
-def _scalar(value: str) -> Any:
-    value = value.strip().strip('"').strip("'")
-    if value.lower() in {"true", "false"}:
-        return _as_bool(value)
+def _parse_yaml_mapping(path: Path) -> dict[str, Any]:
     try:
-        if "." in value:
-            return float(value)
-        return int(value)
-    except ValueError:
-        return value
+        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        raise ValueError(f"Invalid HackTricks YAML config: {path}") from exc
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ValueError(f"HackTricks YAML config must be a mapping: {path}")
+    return raw
 
 
 def _as_bool(value: Any) -> bool:

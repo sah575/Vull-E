@@ -20,6 +20,7 @@ from vulle.rag.hacktricks import (
     classify_security_domains,
     git_commit_sha,
     hacktricks_chunk_id,
+    load_hacktricks_config,
     select_hacktricks_documents,
 )
 from vulle.rag.service import RagService, rerank_chunks
@@ -149,6 +150,43 @@ def test_git_commit_sha_reads_repository_version(tmp_path: Path, monkeypatch) ->
     (ref_dir / "main").write_text(f"{sha}\n", encoding="utf-8")
 
     assert git_commit_sha(tmp_path) == sha
+
+
+def test_hacktricks_config_uses_pyyaml_for_nested_mappings(tmp_path: Path) -> None:
+    config_path = tmp_path / "hacktricks_sources.yml"
+    config_path.write_text(
+        """
+enabled: true
+allow_path_patterns:
+  - "**/mobile-pentesting/**/*.md"
+source_priority: 0.7
+minimum_content_chars: 42
+security_domain_mappings:
+  mobile_auth:
+    - biometric
+    - device binding
+""",
+        encoding="utf-8",
+    )
+
+    config = load_hacktricks_config(config_path)
+
+    assert config.allow_path_patterns == ["**/mobile-pentesting/**/*.md"]
+    assert config.source_priority == 0.7
+    assert config.minimum_content_chars == 42
+    assert config.domain_keywords["mobile_auth"] == ["biometric", "device binding"]
+
+
+def test_hacktricks_config_rejects_non_mapping_yaml(tmp_path: Path) -> None:
+    config_path = tmp_path / "hacktricks_sources.yml"
+    config_path.write_text("- not\n- a\n- mapping\n", encoding="utf-8")
+
+    try:
+        load_hacktricks_config(config_path)
+    except ValueError as exc:
+        assert "must be a mapping" in str(exc)
+    else:
+        raise AssertionError("Expected non-mapping YAML to be rejected")
 
 
 def test_index_hacktricks_uses_replace_or_sync_without_real_services() -> None:
