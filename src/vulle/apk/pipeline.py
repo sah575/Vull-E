@@ -1,0 +1,83 @@
+from pathlib import Path
+
+from vulle import __version__
+from vulle.apk.analyzers.component_rules import (
+    evaluate_component_rules,
+    evaluate_signature_rules,
+)
+from vulle.apk.analyzers.manifest_rules import evaluate_manifest_rules
+from vulle.apk.extractors.certificates import extract_signature_info
+from vulle.apk.extractors.manifest import ManifestFacts, extract_manifest_facts, load_apk
+from vulle.apk.extractors.metadata import extract_dex_files, extract_native_libraries
+from vulle.apk.limits import PARSE_TIMEOUT_SECONDS
+from vulle.apk.models import ApkMetadata, ApkStaticAnalysisReport
+from vulle.apk.workspace import compute_sha256, run_with_timeout, validate_apk_zip
+from vulle.errors import ApkAnalysisTimeoutError
+
+
+def analyze_apk_static(path: Path) -> ApkStaticAnalysisReport:
+    path = Path(path)
+    archive = validate_apk_zip(path)
+    try:
+        dex_files = extract_dex_files(archive)
+        native_libraries = extract_native_libraries(archive)
+    finally:
+        archive.close()
+
+    analysis_limitations = []
+    apk = run_with_timeout(lambda: load_apk(path), timeout=PARSE_TIMEOUT_SECONDS)
+    try:
+        manifest_facts = run_with_timeout(
+            lambda: extract_manifest_facts(apk),
+            timeout=PARSE_TIMEOUT_SECONDS,
+        )
+    except ApkAnalysisTimeoutError:
+        raise
+    except Exception as exc:
+        manifest_facts = ManifestFacts()
+        analysis_limitations.append(
+            f"Failed to extract manifest facts, likely a malformed or unexpected "
+            f"AndroidManifest.xml: {exc.__class__.__name__}: {exc}"
+        )
+    signature = run_with_timeout(
+        lambda: extract_signature_info(apk),
+        timeout=PARSE_TIMEOUT_SECONDS,
+    )
+
+    if manifest_facts.network_security_config.parse_error:
+        analysis_limitations.append(
+            "Could not parse the declared networkSecurityConfig: "
+            f"{manifest_facts.network_security_config.parse_error}"
+        )
+
+    metadata = ApkMetadata(
+        file_name=path.name,
+        file_size=path.stat().st_size,
+        sha256=compute_sha256(path),
+        package_name=manifest_facts.package_name,
+        version_name=manifest_facts.version_name,
+        version_code=manifest_facts.version_code,
+        min_sdk=manifest_facts.min_sdk,
+        target_sdk=manifest_facts.target_sdk,
+        dex_files=dex_files,
+        native_libraries=native_libraries,
+    )
+
+    findings = [
+        *evaluate_manifest_rules(manifest_facts),
+        *evaluate_component_rules(manifest_facts),
+        *evaluate_signature_rules(signature),
+    ]
+
+    return ApkStaticAnalysisReport(
+        app_version=__version__,
+        metadata=metadata,
+        signature=signature,
+        permissions=manifest_facts.permissions,
+        custom_permissions=manifest_facts.custom_permissions,
+        components=manifest_facts.components,
+        deep_links=manifest_facts.deep_links,
+        network_security_config=manifest_facts.network_security_config,
+        findings=findings,
+        analysis_limitations=analysis_limitations,
+    )

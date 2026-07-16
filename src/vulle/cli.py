@@ -119,6 +119,16 @@ def analyze_file(path: Path, output: Path | None = None) -> None:
     _emit_json(analysis.model_dump(), output)
 
 
+@app.command("analyze-apk")
+def analyze_apk(path: Path, output: Path | None = None) -> None:
+    """Statically analyze an Android APK without contacting any backend."""
+    render_banner(console)
+    from vulle.apk.pipeline import analyze_apk_static
+
+    report = analyze_apk_static(path)
+    _emit_json(report.model_dump(), output)
+
+
 @app.command("rag-index")
 def rag_index(
     path: Path,

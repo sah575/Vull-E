@@ -24,6 +24,9 @@ dependencies = [
 vulle = "vulle.cli:app"
 
 [project.optional-dependencies]
+mobile = [
+  "androguard>=4.1.0,<5",
+]
 embedding-server = [
   "fastapi>=0.115.0",
   "sentence-transformers>=3.0.0",
@@ -73,3 +76,7 @@ fail_under = 65
 
 [tool.bandit]
 exclude_dirs = ["tests", ".venv"]
+
+[[tool.mypy.overrides]]
+module = "androguard.*"
+ignore_missing_imports = true

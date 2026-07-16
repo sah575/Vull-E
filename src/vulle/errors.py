@@ -46,6 +46,14 @@ class JiraCustomFieldNotFoundError(VulleError):
     pass
 
 
+class ApkValidationError(VulleError):
+    pass
+
+
+class ApkAnalysisTimeoutError(VulleError):
+    pass
+
+
 def tls_verify(*, verify_ssl: bool, ca_bundle: Path | None) -> bool | ssl.SSLContext:
     if not verify_ssl:
         return False
