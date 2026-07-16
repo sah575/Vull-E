@@ -18,6 +18,18 @@ ComponentType = Literal["activity", "activity-alias", "service", "receiver", "pr
 class NativeLibraryInfo(BaseModel):
     path: str
     abi: str
+    nx_enabled: bool | None = None
+    relro: Literal["none", "partial", "full"] | None = None
+    stack_canary_detected: bool | None = None
+    exported_jni_symbols: list[str] = Field(default_factory=list)
+    parse_error: str | None = None
+
+
+class SdkFingerprint(BaseModel):
+    name: str
+    package_prefix: str
+    class_count: int
+    confidence: Literal["low", "medium", "high"]
 
 
 class ApkMetadata(BaseModel):
@@ -142,4 +154,5 @@ class ApkStaticAnalysisReport(BaseModel):
     )
     findings: list[ApkFinding] = Field(default_factory=list)
     network_endpoints: list[str] = Field(default_factory=list)
+    detected_sdks: list[SdkFingerprint] = Field(default_factory=list)
     analysis_limitations: list[str] = Field(default_factory=list)

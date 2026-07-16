@@ -6,7 +6,9 @@ from vulle.apk.analyzers.component_rules import (
     evaluate_signature_rules,
 )
 from vulle.apk.analyzers.crypto_rules import evaluate_crypto_rules
+from vulle.apk.analyzers.dependency_rules import evaluate_dependency_fingerprints
 from vulle.apk.analyzers.manifest_rules import evaluate_manifest_rules
+from vulle.apk.analyzers.native_rules import evaluate_native_rules
 from vulle.apk.analyzers.secret_rules import evaluate_secret_rules, extract_network_endpoints
 from vulle.apk.analyzers.storage_rules import evaluate_storage_rules
 from vulle.apk.analyzers.tls_rules import evaluate_tls_rules
@@ -15,8 +17,9 @@ from vulle.apk.extractors.certificates import extract_signature_info
 from vulle.apk.extractors.dex_analysis import build_dex_analysis
 from vulle.apk.extractors.manifest import ManifestFacts, extract_manifest_facts, load_apk
 from vulle.apk.extractors.metadata import extract_dex_files, extract_native_libraries
+from vulle.apk.extractors.native_analysis import analyze_native_libraries
 from vulle.apk.limits import CODE_ANALYSIS_TIMEOUT_SECONDS, PARSE_TIMEOUT_SECONDS
-from vulle.apk.models import ApkFinding, ApkMetadata, ApkStaticAnalysisReport
+from vulle.apk.models import ApkFinding, ApkMetadata, ApkStaticAnalysisReport, SdkFingerprint
 from vulle.apk.workspace import compute_sha1, compute_sha256, run_with_timeout, validate_apk_zip
 from vulle.errors import ApkAnalysisTimeoutError
 
@@ -24,13 +27,19 @@ from vulle.errors import ApkAnalysisTimeoutError
 def analyze_apk_static(path: Path) -> ApkStaticAnalysisReport:
     path = Path(path)
     archive = validate_apk_zip(path)
+    analysis_limitations: list[str] = []
     try:
         dex_files = extract_dex_files(archive)
         native_libraries = extract_native_libraries(archive)
+        try:
+            native_libraries = analyze_native_libraries(archive, native_libraries)
+        except Exception as exc:
+            analysis_limitations.append(
+                f"Failed to analyze native libraries: {exc.__class__.__name__}: {exc}"
+            )
     finally:
         archive.close()
 
-    analysis_limitations = []
     apk = run_with_timeout(lambda: load_apk(path), timeout=PARSE_TIMEOUT_SECONDS)
     try:
         manifest_facts = run_with_timeout(
@@ -58,6 +67,7 @@ def analyze_apk_static(path: Path) -> ApkStaticAnalysisReport:
 
     code_findings: list[ApkFinding] = []
     network_endpoints: list[str] = []
+    detected_sdks: list[SdkFingerprint] = []
     try:
         dex_analysis = run_with_timeout(
             lambda: build_dex_analysis(apk),
@@ -71,6 +81,7 @@ def analyze_apk_static(path: Path) -> ApkStaticAnalysisReport:
             *evaluate_storage_rules(dex_analysis),
         ]
         network_endpoints = extract_network_endpoints(dex_analysis)
+        detected_sdks = evaluate_dependency_fingerprints(dex_analysis)
     except ApkAnalysisTimeoutError:
         analysis_limitations.append(
             "DEX/bytecode analysis did not complete within "
@@ -100,6 +111,7 @@ def analyze_apk_static(path: Path) -> ApkStaticAnalysisReport:
         *evaluate_manifest_rules(manifest_facts),
         *evaluate_component_rules(manifest_facts),
         *evaluate_signature_rules(signature),
+        *evaluate_native_rules(native_libraries),
         *code_findings,
     ]
 
@@ -114,5 +126,6 @@ def analyze_apk_static(path: Path) -> ApkStaticAnalysisReport:
         network_security_config=manifest_facts.network_security_config,
         findings=findings,
         network_endpoints=network_endpoints,
+        detected_sdks=detected_sdks,
         analysis_limitations=analysis_limitations,
     )

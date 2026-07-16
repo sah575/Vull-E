@@ -1,4 +1,5 @@
 import builtins
+import struct
 import time
 import xml.etree.ElementTree as ET
 import zipfile
@@ -10,7 +11,9 @@ import pytest
 
 from vulle.apk.analyzers.component_rules import evaluate_component_rules, evaluate_signature_rules
 from vulle.apk.analyzers.crypto_rules import evaluate_crypto_rules
+from vulle.apk.analyzers.dependency_rules import evaluate_dependency_fingerprints
 from vulle.apk.analyzers.manifest_rules import evaluate_manifest_rules
+from vulle.apk.analyzers.native_rules import evaluate_native_rules
 from vulle.apk.analyzers.secret_rules import evaluate_secret_rules, extract_network_endpoints
 from vulle.apk.analyzers.storage_rules import evaluate_storage_rules
 from vulle.apk.analyzers.tls_rules import evaluate_tls_rules
@@ -27,6 +30,7 @@ from vulle.apk.models import (
     ComponentInfo,
     DeepLinkInfo,
     IntentFilterInfo,
+    NativeLibraryInfo,
     NetworkSecurityConfigInfo,
     SignatureInfo,
 )
@@ -1599,3 +1603,271 @@ def test_pipeline_degrades_instead_of_crashing_when_dex_analysis_times_out(
         "did not complete within" in note for note in report.analysis_limitations
     )
     assert report.metadata.package_name is not None
+
+
+# ---------------------------------------------------------------------------
+# extractors/native_analysis.py — real, hand-built minimal ELF64 binaries.
+# pyelftools parses genuine ELF bytes, so androguard-style fake objects
+# don't apply here; these tests are skipped if `elftools` isn't installed.
+# ---------------------------------------------------------------------------
+
+_PT_GNU_STACK = 0x6474E551
+_PT_GNU_RELRO = 0x6474E552
+_PF_X, _PF_W, _PF_R = 1, 2, 4
+_SHT_STRTAB, _SHT_DYNAMIC, _SHT_DYNSYM = 3, 6, 11
+_DT_NULL, _DT_FLAGS = 0, 30
+_DF_BIND_NOW = 0x8
+_STB_GLOBAL, _STT_FUNC, _SHN_UNDEF = 1, 2, 0
+
+
+def _build_minimal_elf(
+    *, stack_executable: bool, include_relro: bool, bind_now: bool
+) -> bytes:
+    ehdr_size, phdr_size, shdr_size, sym_size = 64, 56, 64, 24
+
+    stack_flags = (_PF_R | _PF_W | _PF_X) if stack_executable else (_PF_R | _PF_W)
+    phdrs = [("GNU_STACK", _PT_GNU_STACK, stack_flags)]
+    if include_relro:
+        phdrs.append(("GNU_RELRO", _PT_GNU_RELRO, _PF_R))
+    n_phdr = len(phdrs)
+
+    dynstr = b"\x00__stack_chk_fail\x00Java_com_example_test\x00"
+    off_stack_chk = 1
+    off_java_sym = 1 + len(b"__stack_chk_fail\x00")
+
+    shstrtab = b"\x00.dynsym\x00.dynstr\x00.dynamic\x00.shstrtab\x00"
+    off_dynsym_name = 1
+    off_dynstr_name = off_dynsym_name + len(b".dynsym\x00")
+    off_dynamic_name = off_dynstr_name + len(b".dynstr\x00")
+    off_shstrtab_name = off_dynamic_name + len(b".dynamic\x00")
+
+    def sym_entry(name_off: int, shndx: int, defined: bool) -> bytes:
+        st_info = (_STB_GLOBAL << 4) | _STT_FUNC
+        return struct.pack(
+            "<IBBHQQ",
+            name_off,
+            st_info,
+            0,
+            shndx if defined else _SHN_UNDEF,
+            0x1000 if defined else 0,
+            0,
+        )
+
+    symtab = (
+        sym_entry(0, 0, False)
+        + sym_entry(off_stack_chk, 0, False)
+        + sym_entry(off_java_sym, 1, True)
+    )
+
+    dynamic = b""
+    if bind_now:
+        dynamic += struct.pack("<qQ", _DT_FLAGS, _DF_BIND_NOW)
+    dynamic += struct.pack("<qQ", _DT_NULL, 0)
+
+    off = ehdr_size + n_phdr * phdr_size
+    off_dynstr = off
+    off += len(dynstr)
+    off_symtab = off
+    off += len(symtab)
+    off_dynamic = off
+    off += len(dynamic)
+    off_shstrtab = off
+    off += len(shstrtab)
+    off_shdrs = off
+
+    def section(
+        name_off: int, sh_type: int, link: int, offset: int, size: int, entsize: int
+    ) -> bytes:
+        return struct.pack(
+            "<IIQQQQIIQQ", name_off, sh_type, 0, 0, offset, size, link, 0, 8, entsize
+        )
+
+    sections = [
+        struct.pack("<IIQQQQIIQQ", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
+        section(off_dynsym_name, _SHT_DYNSYM, 2, off_symtab, len(symtab), sym_size),
+        section(off_dynstr_name, _SHT_STRTAB, 0, off_dynstr, len(dynstr), 0),
+        section(off_dynamic_name, _SHT_DYNAMIC, 2, off_dynamic, len(dynamic), 16),
+        section(off_shstrtab_name, _SHT_STRTAB, 0, off_shstrtab, len(shstrtab), 0),
+    ]
+
+    e_ident = b"\x7fELF" + bytes([2, 1, 1, 0]) + b"\x00" * 8
+    ehdr = e_ident + struct.pack(
+        "<HHIQQQIHHHHHH",
+        3,  # ET_DYN
+        62,  # EM_X86_64
+        1,
+        0,
+        ehdr_size,
+        off_shdrs,
+        0,
+        ehdr_size,
+        phdr_size,
+        n_phdr,
+        shdr_size,
+        len(sections),
+        4,  # shstrndx
+    )
+
+    phdr_bytes = b"".join(
+        struct.pack("<IIQQQQQQ", p_type, p_flags, 0, 0, 0, 0, 0, 0x1000)
+        for _name, p_type, p_flags in phdrs
+    )
+
+    return ehdr + phdr_bytes + dynstr + symtab + dynamic + shstrtab + b"".join(sections)
+
+
+def test_parse_elf_detects_nx_enabled_and_full_relro() -> None:
+    pytest.importorskip("elftools")
+    from vulle.apk.extractors.native_analysis import _parse_elf
+
+    data = _build_minimal_elf(stack_executable=False, include_relro=True, bind_now=True)
+
+    facts = _parse_elf(data)
+
+    assert facts["nx_enabled"] is True
+    assert facts["relro"] == "full"
+    assert facts["stack_canary_detected"] is True
+    assert facts["exported_jni_symbols"] == ["Java_com_example_test"]
+
+
+def test_parse_elf_detects_nx_disabled_and_no_relro() -> None:
+    pytest.importorskip("elftools")
+    from vulle.apk.extractors.native_analysis import _parse_elf
+
+    data = _build_minimal_elf(stack_executable=True, include_relro=False, bind_now=False)
+
+    facts = _parse_elf(data)
+
+    assert facts["nx_enabled"] is False
+    assert facts["relro"] == "none"
+
+
+def test_parse_elf_detects_partial_relro_without_bind_now() -> None:
+    pytest.importorskip("elftools")
+    from vulle.apk.extractors.native_analysis import _parse_elf
+
+    data = _build_minimal_elf(stack_executable=False, include_relro=True, bind_now=False)
+
+    facts = _parse_elf(data)
+
+    assert facts["relro"] == "partial"
+
+
+def test_analyze_native_libraries_only_analyzes_preferred_abi(tmp_path: Path) -> None:
+    pytest.importorskip("elftools")
+    from vulle.apk.extractors.native_analysis import analyze_native_libraries
+
+    good_elf = _build_minimal_elf(stack_executable=False, include_relro=True, bind_now=True)
+    zip_path = tmp_path / "sample.apk"
+    with zipfile.ZipFile(zip_path, "w") as archive:
+        archive.writestr("lib/arm64-v8a/libfoo.so", good_elf)
+        archive.writestr("lib/armeabi-v7a/libfoo.so", good_elf)
+
+    libraries = [
+        NativeLibraryInfo(path="lib/arm64-v8a/libfoo.so", abi="arm64-v8a"),
+        NativeLibraryInfo(path="lib/armeabi-v7a/libfoo.so", abi="armeabi-v7a"),
+    ]
+    with zipfile.ZipFile(zip_path) as archive:
+        analyzed = analyze_native_libraries(archive, libraries)
+
+    arm64 = next(lib for lib in analyzed if lib.abi == "arm64-v8a")
+    armeabi = next(lib for lib in analyzed if lib.abi == "armeabi-v7a")
+    assert arm64.nx_enabled is True
+    assert armeabi.nx_enabled is None
+
+
+def test_analyze_native_libraries_sets_parse_error_on_garbage(tmp_path: Path) -> None:
+    pytest.importorskip("elftools")
+    from vulle.apk.extractors.native_analysis import analyze_native_libraries
+
+    zip_path = tmp_path / "sample.apk"
+    with zipfile.ZipFile(zip_path, "w") as archive:
+        archive.writestr("lib/arm64-v8a/libbad.so", b"not an elf file")
+
+    with zipfile.ZipFile(zip_path) as archive:
+        libraries = [NativeLibraryInfo(path="lib/arm64-v8a/libbad.so", abi="arm64-v8a")]
+        analyzed = analyze_native_libraries(archive, libraries)
+
+    assert analyzed[0].parse_error is not None
+    assert analyzed[0].nx_enabled is None
+
+
+# ---------------------------------------------------------------------------
+# analyzers/native_rules.py
+# ---------------------------------------------------------------------------
+
+
+def test_native_rules_flags_nx_disabled() -> None:
+    library = NativeLibraryInfo(path="lib/arm64-v8a/libfoo.so", abi="arm64-v8a", nx_enabled=False)
+
+    findings = evaluate_native_rules([library])
+
+    assert any(f.rule_id == "android.native.nx_disabled" for f in findings)
+
+
+def test_native_rules_flags_missing_relro() -> None:
+    library = NativeLibraryInfo(path="lib/arm64-v8a/libfoo.so", abi="arm64-v8a", relro="none")
+
+    findings = evaluate_native_rules([library])
+
+    assert any(f.rule_id == "android.native.relro_missing" for f in findings)
+
+
+def test_native_rules_does_not_flag_when_protections_enabled() -> None:
+    library = NativeLibraryInfo(
+        path="lib/arm64-v8a/libfoo.so", abi="arm64-v8a", nx_enabled=True, relro="full"
+    )
+
+    findings = evaluate_native_rules([library])
+
+    assert findings == []
+
+
+def test_native_rules_skips_libraries_with_parse_error() -> None:
+    library = NativeLibraryInfo(
+        path="lib/arm64-v8a/libfoo.so",
+        abi="arm64-v8a",
+        nx_enabled=False,
+        parse_error="ELFError: bad format",
+    )
+
+    findings = evaluate_native_rules([library])
+
+    assert findings == []
+
+
+# ---------------------------------------------------------------------------
+# analyzers/dependency_rules.py
+# ---------------------------------------------------------------------------
+
+
+def test_dependency_fingerprints_detects_known_sdk() -> None:
+    classes = [
+        FakeClassAnalysis(FakeClassDef(f"Lcom/google/firebase/Foo{i};"))
+        for i in range(3)
+    ]
+    analysis = FakeDexAnalysis(classes=classes)
+
+    fingerprints = evaluate_dependency_fingerprints(analysis)
+
+    assert any(fp.name == "Firebase" and fp.class_count == 3 for fp in fingerprints)
+
+
+def test_dependency_fingerprints_prefers_more_specific_prefix() -> None:
+    classes = [FakeClassAnalysis(FakeClassDef("Lcom/facebook/react/ReactActivity;"))]
+    analysis = FakeDexAnalysis(classes=classes)
+
+    fingerprints = evaluate_dependency_fingerprints(analysis)
+
+    names = {fp.name for fp in fingerprints}
+    assert "React Native" in names
+    assert "Facebook SDK" not in names
+
+
+def test_dependency_fingerprints_ignores_unknown_packages() -> None:
+    classes = [FakeClassAnalysis(FakeClassDef("Lcom/example/bank/MainActivity;"))]
+    analysis = FakeDexAnalysis(classes=classes)
+
+    fingerprints = evaluate_dependency_fingerprints(analysis)
+
+    assert fingerprints == []
