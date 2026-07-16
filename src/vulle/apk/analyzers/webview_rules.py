@@ -7,6 +7,9 @@ T = TypeVar("T")
 
 _SET_JAVASCRIPT_ENABLED = "WebSettings;->setJavaScriptEnabled"
 _ADD_JAVASCRIPT_INTERFACE = "WebView;->addJavascriptInterface"
+_SET_MIXED_CONTENT_MODE = "WebSettings;->setMixedContentMode"
+_SET_ALLOW_UNIVERSAL_FILE_ACCESS = "WebSettings;->setAllowUniversalAccessFromFileURLs"
+_SET_WEB_CONTENTS_DEBUGGING = "WebView;->setWebContentsDebuggingEnabled"
 
 
 def evaluate_webview_rules(analysis: Any) -> list[ApkFinding]:
@@ -21,6 +24,12 @@ def evaluate_webview_rules(analysis: Any) -> list[ApkFinding]:
             findings.append(_combined_finding(class_name))
         elif has_js_interface:
             findings.append(_interface_only_finding(class_name))
+        if _calls(instructions, _SET_MIXED_CONTENT_MODE):
+            findings.append(_mixed_content_finding(class_name))
+        if _calls(instructions, _SET_ALLOW_UNIVERSAL_FILE_ACCESS):
+            findings.append(_universal_file_access_finding(class_name))
+        if _calls(instructions, _SET_WEB_CONTENTS_DEBUGGING):
+            findings.append(_web_contents_debugging_finding(class_name))
     return findings
 
 
@@ -92,6 +101,97 @@ def _interface_only_finding(class_name: str) -> ApkFinding:
             "Only expose JavaScript interfaces to WebViews that exclusively load "
             "trusted, first-party content."
         ),
+    )
+
+
+def _mixed_content_finding(class_name: str) -> ApkFinding:
+    return ApkFinding(
+        id=f"ANDROID-WEBVIEW-MIXED-CONTENT-{_slug(class_name)}",
+        rule_id="android.webview.mixed_content_mode",
+        title=f"WebView sets a mixed-content mode: {class_name}",
+        category="webview",
+        severity="medium",
+        status="informational",
+        evidence=[
+            ApkEvidence(
+                artifact_type="dex_code",
+                artifact_path=class_name,
+                location=class_name,
+                quote="class calls WebSettings.setMixedContentMode",
+            )
+        ],
+        impact=(
+            "This static signal cannot confirm the mode value passed. If set to "
+            "MIXED_CONTENT_ALWAYS_ALLOW, an HTTPS page in this WebView could load "
+            "HTTP subresources, letting a network attacker tamper with page content."
+        ),
+        recommended_validation=[
+            "Check the actual argument passed to setMixedContentMode in the "
+            "decompiled source.",
+            "Load an HTTPS page with an HTTP subresource in this WebView and "
+            "confirm whether it is blocked.",
+        ],
+        remediation="Use MIXED_CONTENT_NEVER_ALLOW unless there is a specific, reviewed need.",
+    )
+
+
+def _universal_file_access_finding(class_name: str) -> ApkFinding:
+    return ApkFinding(
+        id=f"ANDROID-WEBVIEW-UNIVERSAL-FILE-ACCESS-{_slug(class_name)}",
+        rule_id="android.webview.universal_file_access",
+        title=f"WebView allows universal access from file URLs: {class_name}",
+        category="webview",
+        severity="high",
+        status="risk_hypothesis",
+        evidence=[
+            ApkEvidence(
+                artifact_type="dex_code",
+                artifact_path=class_name,
+                location=class_name,
+                quote="class calls WebSettings.setAllowUniversalAccessFromFileURLs",
+            )
+        ],
+        impact=(
+            "If enabled (true), content loaded from a file:// URL can access content "
+            "from any origin, including other local files and, combined with a "
+            "JavaScript interface, potentially cross-origin web content."
+        ),
+        recommended_validation=[
+            "Check the actual argument passed and whether this WebView ever loads "
+            "file:// URLs from an untrusted or attacker-influenced path.",
+        ],
+        remediation=(
+            "Set setAllowUniversalAccessFromFileURLs(false) unless a specific, "
+            "reviewed need exists."
+        ),
+    )
+
+
+def _web_contents_debugging_finding(class_name: str) -> ApkFinding:
+    return ApkFinding(
+        id=f"ANDROID-WEBVIEW-DEBUGGING-{_slug(class_name)}",
+        rule_id="android.webview.debugging_enabled",
+        title=f"WebView content debugging is enabled: {class_name}",
+        category="webview",
+        severity="low",
+        status="informational",
+        evidence=[
+            ApkEvidence(
+                artifact_type="dex_code",
+                artifact_path=class_name,
+                location=class_name,
+                quote="class calls WebView.setWebContentsDebuggingEnabled",
+            )
+        ],
+        impact=(
+            "If enabled in a production build, this WebView's content can be "
+            "inspected/debugged via Chrome DevTools by anyone with a USB/adb "
+            "connection to the device, similar in spirit to android:debuggable."
+        ),
+        recommended_validation=[
+            "Confirm this build variant is test/QA and not the production release.",
+        ],
+        remediation="Only call setWebContentsDebuggingEnabled(true) in debug builds.",
     )
 
 

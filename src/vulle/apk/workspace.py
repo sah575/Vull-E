@@ -68,7 +68,16 @@ def _reject_path_traversal(filename: str) -> None:
 
 
 def compute_sha256(path: Path) -> str:
-    digest = hashlib.sha256()
+    return _compute_digest(path, hashlib.sha256())
+
+
+def compute_sha1(path: Path) -> str:
+    # Not used for security purposes here - only as a file-identification hash
+    # alongside SHA-256, matching the conventional VirusTotal-style report format.
+    return _compute_digest(path, hashlib.sha1(usedforsecurity=False))
+
+
+def _compute_digest(path: Path, digest: "hashlib._Hash") -> str:
     with path.open("rb") as handle:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)

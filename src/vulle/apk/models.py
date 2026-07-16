@@ -24,6 +24,7 @@ class ApkMetadata(BaseModel):
     file_name: str
     file_size: int
     sha256: str
+    sha1: str
     package_name: str | None = None
     version_name: str | None = None
     version_code: str | None = None
@@ -84,6 +85,8 @@ class ComponentInfo(BaseModel):
     grant_uri_permissions: bool = False
     authorities: list[str] = Field(default_factory=list)
     intent_filters: list[IntentFilterInfo] = Field(default_factory=list)
+    process: str | None = None
+    direct_boot_aware: bool | None = None
 
 
 class DeepLinkInfo(BaseModel):

@@ -16,6 +16,7 @@ def evaluate_component_rules(facts: ManifestFacts) -> list[ApkFinding]:
         else:
             findings.extend(_exported_component_findings(component))
     findings.extend(_deep_link_findings(facts.deep_links))
+    findings.extend(_deep_link_collision_findings(facts.deep_links))
     return findings
 
 
@@ -168,6 +169,59 @@ def _deep_link_findings(deep_links: list[DeepLinkInfo]) -> list[ApkFinding]:
                 remediation=(
                     "Restrict the intent filter to a specific host, and enable "
                     "android:autoVerify with a matching assetlinks.json for App Links."
+                ),
+            )
+        )
+    return findings
+
+
+def _deep_link_collision_findings(deep_links: list[DeepLinkInfo]) -> list[ApkFinding]:
+    specific_links = [link for link in deep_links if link.host and link.host != "*"]
+    grouped: dict[tuple[str | None, str], list[str]] = defaultdict(list)
+    for link in specific_links:
+        if link.host is None:
+            continue
+        grouped[(link.scheme, link.host)].append(link.component_class)
+
+    findings = []
+    for (scheme, host), component_classes in grouped.items():
+        components = sorted(set(component_classes))
+        if len(components) < 2:
+            continue
+        slug_source = f"{scheme}-{host}"
+        findings.append(
+            ApkFinding(
+                id=f"ANDROID-DEEPLINK-COLLISION-{_slug(slug_source)}",
+                rule_id="android.manifest.deep_link_collision",
+                title=(
+                    f"Multiple components claim the same deep link: {scheme}://{host} "
+                    f"({len(components)} components)"
+                ),
+                category="deep_link",
+                severity="medium",
+                status="risk_hypothesis",
+                evidence=[
+                    ApkEvidence(
+                        artifact_type="manifest",
+                        artifact_path=_MANIFEST_PATH,
+                        location=f"{component}/intent-filter/data",
+                        quote=f'android:scheme="{scheme}" android:host="{host}"',
+                    )
+                    for component in components
+                ],
+                impact=(
+                    "More than one component in this app declares an intent filter for "
+                    "the same scheme/host. Depending on priority/order and autoVerify "
+                    "status, this can cause ambiguous resolution or let one component "
+                    "unexpectedly intercept URLs intended for another."
+                ),
+                recommended_validation=[
+                    f"Send a VIEW intent for {scheme}://{host} and confirm which of the "
+                    "listed components actually handles it.",
+                ],
+                remediation=(
+                    "Ensure only the intended component declares this scheme/host, or "
+                    "differentiate them with distinct paths and android:autoVerify."
                 ),
             )
         )

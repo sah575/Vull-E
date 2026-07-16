@@ -22,6 +22,12 @@ def evaluate_manifest_rules(facts: ManifestFacts) -> list[ApkFinding]:
     test_only = _test_only_finding(facts.application)
     if test_only is not None:
         findings.append(test_only)
+    legacy_storage = _legacy_external_storage_finding(facts.application)
+    if legacy_storage is not None:
+        findings.append(legacy_storage)
+    shared_user_id = _shared_user_id_finding(facts.application)
+    if shared_user_id is not None:
+        findings.append(shared_user_id)
     return findings
 
 
@@ -155,6 +161,72 @@ def _test_only_finding(app: ApplicationAttributes) -> ApkFinding | None:
             "corresponds to.",
         ],
         remediation="Remove android:testOnly (or ensure it is false) before release builds.",
+    )
+
+
+def _legacy_external_storage_finding(app: ApplicationAttributes) -> ApkFinding | None:
+    if app.request_legacy_external_storage is not True:
+        return None
+    return ApkFinding(
+        id="ANDROID-MANIFEST-LEGACY-EXTERNAL-STORAGE",
+        rule_id="android.manifest.request_legacy_external_storage",
+        title="Legacy (unscoped) external storage access is requested",
+        category="data_storage",
+        severity="medium",
+        status="confirmed_static_misconfiguration",
+        evidence=[
+            _evidence(
+                "application/@android:requestLegacyExternalStorage",
+                'android:requestLegacyExternalStorage="true"',
+            )
+        ],
+        impact=(
+            "The app opts out of Android's scoped storage model, giving it broad "
+            "read/write access to shared external storage instead of an app-specific "
+            "sandboxed directory, which widens the blast radius if another app or the "
+            "user's files on external storage are compromised."
+        ),
+        recommended_validation=[
+            "Confirm what data this app reads/writes on shared external storage and "
+            "whether any of it is sensitive.",
+        ],
+        remediation=(
+            "Remove android:requestLegacyExternalStorage and adopt scoped storage "
+            "(MediaStore / SAF / app-specific directories)."
+        ),
+    )
+
+
+def _shared_user_id_finding(app: ApplicationAttributes) -> ApkFinding | None:
+    if not app.shared_user_id:
+        return None
+    return ApkFinding(
+        id="ANDROID-MANIFEST-SHARED-USER-ID",
+        rule_id="android.manifest.shared_user_id",
+        title=f"Application declares a shared user ID: {app.shared_user_id}",
+        category="platform_configuration",
+        severity="low",
+        status="informational",
+        evidence=[
+            _evidence(
+                "manifest/@android:sharedUserId",
+                f'android:sharedUserId="{app.shared_user_id}"',
+            )
+        ],
+        impact=(
+            "Apps signed with the same key and sharing this user ID run with the same "
+            "Linux UID, letting them share process, permissions, and (unless explicitly "
+            "isolated) data with each other. This is deprecated in modern Android and "
+            "worth confirming is intentional."
+        ),
+        recommended_validation=[
+            "Confirm which other apps (if any) declare the same sharedUserId and "
+            "whether that data/process sharing is intended.",
+        ],
+        remediation=(
+            "Avoid android:sharedUserId for new development; use ContentProvider-based "
+            "sharing or a defined IPC interface instead."
+        ),
     )
 
 

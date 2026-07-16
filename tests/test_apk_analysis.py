@@ -9,8 +9,10 @@ from typing import Any
 import pytest
 
 from vulle.apk.analyzers.component_rules import evaluate_component_rules, evaluate_signature_rules
+from vulle.apk.analyzers.crypto_rules import evaluate_crypto_rules
 from vulle.apk.analyzers.manifest_rules import evaluate_manifest_rules
 from vulle.apk.analyzers.secret_rules import evaluate_secret_rules, extract_network_endpoints
+from vulle.apk.analyzers.storage_rules import evaluate_storage_rules
 from vulle.apk.analyzers.tls_rules import evaluate_tls_rules
 from vulle.apk.analyzers.webview_rules import evaluate_webview_rules
 from vulle.apk.extractors.certificates import extract_signature_info
@@ -228,6 +230,64 @@ def test_application_attributes_default_to_none_when_undeclared() -> None:
 
     assert facts.application.debuggable is None
     assert facts.application.allow_backup is None
+
+
+def test_application_attributes_include_legacy_storage_and_extract_native_libs() -> None:
+    apk = FakeApk(
+        tags={
+            "application": [
+                _application_tag(
+                    requestLegacyExternalStorage="true",
+                    extractNativeLibs="false",
+                )
+            ]
+        }
+    )
+
+    facts = extract_manifest_facts(apk)
+
+    assert facts.application.request_legacy_external_storage is True
+    assert facts.application.extract_native_libs is False
+
+
+def test_shared_user_id_is_extracted_from_manifest_root() -> None:
+    apk = FakeApk(
+        tags={
+            "manifest": [_element("manifest", {"sharedUserId": "com.example.uid"})],
+            "application": [_application_tag()],
+        }
+    )
+
+    facts = extract_manifest_facts(apk)
+
+    assert facts.application.shared_user_id == "com.example.uid"
+
+
+def test_shared_user_id_is_none_when_not_declared() -> None:
+    apk = FakeApk(tags={"application": [_application_tag()]})
+
+    facts = extract_manifest_facts(apk)
+
+    assert facts.application.shared_user_id is None
+
+
+def test_component_process_and_direct_boot_aware_are_extracted() -> None:
+    apk = FakeApk(
+        tags={
+            "activity": [
+                _activity_tag(
+                    name="com.example.Activity",
+                    process=":remote",
+                    directBootAware="true",
+                )
+            ]
+        }
+    )
+
+    facts = extract_manifest_facts(apk)
+
+    assert facts.components[0].process == ":remote"
+    assert facts.components[0].direct_boot_aware is True
 
 
 def test_explicit_exported_true_is_respected_even_without_intent_filter() -> None:
@@ -558,6 +618,43 @@ def test_test_only_true_is_flagged() -> None:
     assert any(f.id == "ANDROID-MANIFEST-TEST-ONLY" for f in findings)
 
 
+def test_legacy_external_storage_true_is_flagged() -> None:
+    facts = ManifestFacts(
+        application=ApplicationAttributes(request_legacy_external_storage=True)
+    )
+
+    findings = evaluate_manifest_rules(facts)
+
+    assert any(f.id == "ANDROID-MANIFEST-LEGACY-EXTERNAL-STORAGE" for f in findings)
+
+
+def test_legacy_external_storage_unset_is_not_flagged() -> None:
+    facts = ManifestFacts(application=ApplicationAttributes())
+
+    findings = evaluate_manifest_rules(facts)
+
+    assert not any(f.id == "ANDROID-MANIFEST-LEGACY-EXTERNAL-STORAGE" for f in findings)
+
+
+def test_shared_user_id_declared_is_flagged_informational() -> None:
+    facts = ManifestFacts(application=ApplicationAttributes(shared_user_id="com.example.uid"))
+
+    findings = evaluate_manifest_rules(facts)
+
+    assert any(
+        f.id == "ANDROID-MANIFEST-SHARED-USER-ID" and f.status == "informational"
+        for f in findings
+    )
+
+
+def test_shared_user_id_unset_is_not_flagged() -> None:
+    facts = ManifestFacts(application=ApplicationAttributes())
+
+    findings = evaluate_manifest_rules(facts)
+
+    assert not any(f.id == "ANDROID-MANIFEST-SHARED-USER-ID" for f in findings)
+
+
 # ---------------------------------------------------------------------------
 # analyzers/component_rules.py
 # ---------------------------------------------------------------------------
@@ -740,6 +837,46 @@ def test_verified_deep_link_is_not_flagged() -> None:
     assert findings == []
 
 
+def test_deep_link_collision_across_components_is_flagged() -> None:
+    facts = ManifestFacts(
+        deep_links=[
+            DeepLinkInfo(
+                scheme="https",
+                host="bank.example.com",
+                auto_verify=True,
+                component_class="com.example.FirstActivity",
+            ),
+            DeepLinkInfo(
+                scheme="https",
+                host="bank.example.com",
+                auto_verify=True,
+                component_class="com.example.SecondActivity",
+            ),
+        ]
+    )
+
+    findings = evaluate_component_rules(facts)
+
+    assert any(f.rule_id == "android.manifest.deep_link_collision" for f in findings)
+
+
+def test_single_component_deep_link_is_not_flagged_as_collision() -> None:
+    facts = ManifestFacts(
+        deep_links=[
+            DeepLinkInfo(
+                scheme="https",
+                host="bank.example.com",
+                auto_verify=True,
+                component_class="com.example.OnlyActivity",
+            ),
+        ]
+    )
+
+    findings = evaluate_component_rules(facts)
+
+    assert not any(f.rule_id == "android.manifest.deep_link_collision" for f in findings)
+
+
 def test_debug_signer_is_flagged_informational() -> None:
     signature = SignatureInfo(
         certificates=[
@@ -806,6 +943,8 @@ def test_analyze_apk_static_end_to_end(tmp_path: Path, monkeypatch: pytest.Monke
         for f in report.findings
     )
     assert any(f.id == "ANDROID-CERT-DEBUG-SIGNER" for f in report.findings)
+    assert len(report.metadata.sha1) == 40
+    assert len(report.metadata.sha256) == 64
 
 
 def test_analyze_apk_static_degrades_instead_of_crashing_on_malformed_manifest(
@@ -1063,6 +1202,222 @@ def test_webview_rules_does_not_flag_class_without_webview_calls() -> None:
     )
 
     findings = evaluate_webview_rules(analysis)
+
+    assert findings == []
+
+
+def test_webview_rules_flags_mixed_content_mode() -> None:
+    method = FakeEncodedMethod(
+        "setup",
+        [
+            FakeInstruction(
+                "invoke-virtual", "Landroid/webkit/WebSettings;->setMixedContentMode(I)V"
+            ),
+        ],
+    )
+    class_def = FakeClassDef("Lcom/example/MainActivity;")
+    analysis = FakeDexAnalysis(
+        classes=[FakeClassAnalysis(class_def, methods=[FakeMethodAnalysis(method)])]
+    )
+
+    findings = evaluate_webview_rules(analysis)
+
+    assert any(f.rule_id == "android.webview.mixed_content_mode" for f in findings)
+
+
+def test_webview_rules_flags_universal_file_access() -> None:
+    method = FakeEncodedMethod(
+        "setup",
+        [
+            FakeInstruction(
+                "invoke-virtual",
+                "Landroid/webkit/WebSettings;->setAllowUniversalAccessFromFileURLs(Z)V",
+            ),
+        ],
+    )
+    class_def = FakeClassDef("Lcom/example/MainActivity;")
+    analysis = FakeDexAnalysis(
+        classes=[FakeClassAnalysis(class_def, methods=[FakeMethodAnalysis(method)])]
+    )
+
+    findings = evaluate_webview_rules(analysis)
+
+    assert any(
+        f.rule_id == "android.webview.universal_file_access" and f.severity == "high"
+        for f in findings
+    )
+
+
+def test_webview_rules_flags_web_contents_debugging() -> None:
+    method = FakeEncodedMethod(
+        "setup",
+        [
+            FakeInstruction(
+                "invoke-static",
+                "Landroid/webkit/WebView;->setWebContentsDebuggingEnabled(Z)V",
+            ),
+        ],
+    )
+    class_def = FakeClassDef("Lcom/example/MainActivity;")
+    analysis = FakeDexAnalysis(
+        classes=[FakeClassAnalysis(class_def, methods=[FakeMethodAnalysis(method)])]
+    )
+
+    findings = evaluate_webview_rules(analysis)
+
+    assert any(f.rule_id == "android.webview.debugging_enabled" for f in findings)
+
+
+# ---------------------------------------------------------------------------
+# analyzers/crypto_rules.py
+# ---------------------------------------------------------------------------
+
+
+def test_crypto_rules_flags_ecb_cipher_mode() -> None:
+    method = FakeEncodedMethod(
+        "encrypt",
+        [
+            FakeInstruction("const-string", 'v0, "AES/ECB/PKCS5Padding"'),
+            FakeInstruction(
+                "invoke-static", "Ljavax/crypto/Cipher;->getInstance(Ljava/lang/String;)..."
+            ),
+        ],
+    )
+    class_def = FakeClassDef("Lcom/example/Crypto;")
+    analysis = FakeDexAnalysis(
+        classes=[FakeClassAnalysis(class_def, methods=[FakeMethodAnalysis(method)])]
+    )
+
+    findings = evaluate_crypto_rules(analysis)
+
+    assert any(f.rule_id == "android.crypto.ecb_cipher_mode" for f in findings)
+
+
+def test_crypto_rules_does_not_flag_gcm_cipher_mode() -> None:
+    method = FakeEncodedMethod(
+        "encrypt",
+        [
+            FakeInstruction("const-string", 'v0, "AES/GCM/NoPadding"'),
+            FakeInstruction(
+                "invoke-static", "Ljavax/crypto/Cipher;->getInstance(Ljava/lang/String;)..."
+            ),
+        ],
+    )
+    class_def = FakeClassDef("Lcom/example/Crypto;")
+    analysis = FakeDexAnalysis(
+        classes=[FakeClassAnalysis(class_def, methods=[FakeMethodAnalysis(method)])]
+    )
+
+    findings = evaluate_crypto_rules(analysis)
+
+    assert findings == []
+
+
+def test_crypto_rules_flags_weak_hash_algorithm() -> None:
+    method = FakeEncodedMethod(
+        "hash",
+        [
+            FakeInstruction("const-string", 'v0, "MD5"'),
+            FakeInstruction(
+                "invoke-static",
+                "Ljava/security/MessageDigest;->getInstance(Ljava/lang/String;)...",
+            ),
+        ],
+    )
+    class_def = FakeClassDef("Lcom/example/Hasher;")
+    analysis = FakeDexAnalysis(
+        classes=[FakeClassAnalysis(class_def, methods=[FakeMethodAnalysis(method)])]
+    )
+
+    findings = evaluate_crypto_rules(analysis)
+
+    assert any(
+        f.rule_id == "android.crypto.weak_hash_algorithm" and f.status == "informational"
+        for f in findings
+    )
+
+
+def test_crypto_rules_flags_weak_random() -> None:
+    method = FakeEncodedMethod(
+        "generate",
+        [FakeInstruction("invoke-direct", "Ljava/util/Random;-><init>()V")],
+    )
+    class_def = FakeClassDef("Lcom/example/TokenGenerator;")
+    analysis = FakeDexAnalysis(
+        classes=[FakeClassAnalysis(class_def, methods=[FakeMethodAnalysis(method)])]
+    )
+
+    findings = evaluate_crypto_rules(analysis)
+
+    assert any(f.rule_id == "android.crypto.weak_random" for f in findings)
+
+
+# ---------------------------------------------------------------------------
+# analyzers/storage_rules.py
+# ---------------------------------------------------------------------------
+
+
+def test_storage_rules_flags_shared_preferences_without_encrypted_variant() -> None:
+    method = FakeEncodedMethod(
+        "load",
+        [
+            FakeInstruction(
+                "invoke-interface",
+                "Landroid/content/SharedPreferences;->getString"
+                "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;",
+            )
+        ],
+    )
+    class_def = FakeClassDef("Lcom/example/PrefsHelper;")
+    analysis = FakeDexAnalysis(
+        classes=[FakeClassAnalysis(class_def, methods=[FakeMethodAnalysis(method)])]
+    )
+
+    findings = evaluate_storage_rules(analysis)
+
+    assert any(
+        f.rule_id == "android.storage.shared_preferences_without_encryption"
+        for f in findings
+    )
+
+
+def test_storage_rules_does_not_flag_when_encrypted_variant_is_used() -> None:
+    prefs_method = FakeEncodedMethod(
+        "load",
+        [
+            FakeInstruction(
+                "invoke-interface",
+                "Landroid/content/SharedPreferences;->getString"
+                "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;",
+            )
+        ],
+    )
+    analysis = FakeDexAnalysis(
+        classes=[
+            FakeClassAnalysis(
+                FakeClassDef("Lcom/example/PrefsHelper;"),
+                methods=[FakeMethodAnalysis(prefs_method)],
+            ),
+            FakeClassAnalysis(
+                FakeClassDef("Landroidx/security/crypto/EncryptedSharedPreferences;"),
+                methods=[],
+            ),
+        ]
+    )
+
+    findings = evaluate_storage_rules(analysis)
+
+    assert findings == []
+
+
+def test_storage_rules_does_not_flag_when_no_shared_preferences_usage() -> None:
+    method = FakeEncodedMethod("unrelated", [FakeInstruction("return-void")])
+    class_def = FakeClassDef("Lcom/example/Unrelated;")
+    analysis = FakeDexAnalysis(
+        classes=[FakeClassAnalysis(class_def, methods=[FakeMethodAnalysis(method)])]
+    )
+
+    findings = evaluate_storage_rules(analysis)
 
     assert findings == []
 

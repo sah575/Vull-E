@@ -33,6 +33,9 @@ class ApplicationAttributes(BaseModel):
     test_only: bool | None = None
     full_backup_content: str | None = None
     network_security_config_ref: str | None = None
+    shared_user_id: str | None = None
+    request_legacy_external_storage: bool | None = None
+    extract_native_libs: bool | None = None
 
 
 class ManifestFacts(BaseModel):
@@ -132,6 +135,8 @@ def _component_from_element(apk: Any, element: Any, component_type: ComponentTyp
         ),
         authorities=authorities,
         intent_filters=intent_filters,
+        process=apk.get_value_from_tag(element, "process"),
+        direct_boot_aware=_bool_attr(apk.get_value_from_tag(element, "directBootAware")),
     )
 
 
@@ -207,7 +212,20 @@ def _extract_application_attributes(apk: Any) -> ApplicationAttributes:
         test_only=_bool_attr(apk.get_value_from_tag(element, "testOnly")),
         full_backup_content=apk.get_value_from_tag(element, "fullBackupContent"),
         network_security_config_ref=apk.get_value_from_tag(element, "networkSecurityConfig"),
+        shared_user_id=_extract_shared_user_id(apk),
+        request_legacy_external_storage=_bool_attr(
+            apk.get_value_from_tag(element, "requestLegacyExternalStorage")
+        ),
+        extract_native_libs=_bool_attr(apk.get_value_from_tag(element, "extractNativeLibs")),
     )
+
+
+def _extract_shared_user_id(apk: Any) -> str | None:
+    elements = apk.find_tags("manifest")
+    if not elements:
+        return None
+    value = apk.get_value_from_tag(elements[0], "sharedUserId")
+    return str(value) if value is not None else None
 
 
 def _extract_network_security_config(
