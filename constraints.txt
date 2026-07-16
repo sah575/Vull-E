@@ -64,7 +64,7 @@ requests==2.34.2
 requests-toolbelt==1.0.0
 rich==15.0.0
 ruff==0.15.16
-setuptools==82.0.1
+setuptools==83.0.0
 shellingham==1.5.4
 sortedcontainers==2.4.0
 stevedore==5.8.0
