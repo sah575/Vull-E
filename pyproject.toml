@@ -78,5 +78,5 @@ fail_under = 65
 exclude_dirs = ["tests", ".venv"]
 
 [[tool.mypy.overrides]]
-module = "androguard.*"
+module = ["androguard.*", "loguru.*"]
 ignore_missing_imports = true
