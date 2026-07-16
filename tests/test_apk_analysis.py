@@ -1470,6 +1470,29 @@ def test_secret_rules_does_not_flag_plain_sentence() -> None:
     assert findings == []
 
 
+def test_secret_rules_does_not_flag_camelcase_identifier_without_digits() -> None:
+    # Real APK data showed ordinary Android identifiers like "AccessibilityCompat"
+    # tripping the old digit-less entropy heuristic - regression guard.
+    string_analysis = FakeStringAnalysis("AccessibilityCompatActivityImplementation")
+    analysis = FakeDexAnalysis(strings=[string_analysis])
+
+    findings = evaluate_secret_rules(analysis)
+
+    assert findings == []
+
+
+def test_secret_rules_caps_generic_high_entropy_candidates() -> None:
+    candidates = [
+        FakeStringAnalysis(f"Xk9{i}Zq7Wp2Rt5{i}Vb3Nm8Lc1Hf6")
+        for i in range(30)
+    ]
+    analysis = FakeDexAnalysis(strings=candidates)
+
+    findings = evaluate_secret_rules(analysis)
+
+    assert len(findings) <= 15
+
+
 def test_network_endpoints_are_deduplicated_and_not_findings() -> None:
     analysis = FakeDexAnalysis(
         strings=[

@@ -41,13 +41,17 @@ _KNOWN_SECRET_PATTERNS: list[tuple[str, re.Pattern[str], Severity]] = [
     ),
 ]
 
-_MIN_ENTROPY_FOR_GENERIC_CANDIDATE = 4.0
+_MIN_ENTROPY_FOR_GENERIC_CANDIDATE = 4.3
 _GENERIC_CANDIDATE_PATTERN = re.compile(r"^[A-Za-z0-9+/_=.-]+$")
+_HAS_DIGIT = re.compile(r"\d")
+_MAX_GENERIC_CANDIDATES_REPORTED = 15
 
 
 def evaluate_secret_rules(analysis: Any) -> list[ApkFinding]:
-    findings = []
+    known_findings = []
+    generic_candidates: list[tuple[float, Any, str]] = []
     seen: set[tuple[str, str]] = set()
+
     for index, string_analysis in enumerate(_strings(analysis)):
         if index >= MAX_STRINGS_SCANNED:
             break
@@ -63,8 +67,17 @@ def evaluate_secret_rules(analysis: Any) -> list[ApkFinding]:
         if dedupe_key in seen:
             continue
         seen.add(dedupe_key)
-        findings.append(_finding_for(string_analysis, category, severity, value))
-    return findings
+        if category == "high_entropy_candidate":
+            generic_candidates.append((_shannon_entropy(value), string_analysis, value))
+        else:
+            known_findings.append(_finding_for(string_analysis, category, severity, value))
+
+    generic_candidates.sort(key=lambda item: item[0], reverse=True)
+    generic_findings = [
+        _finding_for(string_analysis, "high_entropy_candidate", "info", value)
+        for _, string_analysis, value in generic_candidates[:_MAX_GENERIC_CANDIDATES_REPORTED]
+    ]
+    return known_findings + generic_findings
 
 
 def extract_network_endpoints(analysis: Any) -> list[str]:
@@ -86,6 +99,7 @@ def _classify(value: str) -> tuple[str | None, Severity]:
             return name, severity
     if (
         _GENERIC_CANDIDATE_PATTERN.match(value)
+        and _HAS_DIGIT.search(value)
         and _shannon_entropy(value) >= _MIN_ENTROPY_FOR_GENERIC_CANDIDATE
     ):
         return "high_entropy_candidate", "info"
