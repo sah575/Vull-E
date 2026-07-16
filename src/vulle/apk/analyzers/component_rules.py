@@ -1,7 +1,11 @@
+from collections import defaultdict
+
 from vulle.apk.extractors.manifest import ManifestFacts
 from vulle.apk.models import ApkEvidence, ApkFinding, ComponentInfo, DeepLinkInfo, SignatureInfo
 
 _MANIFEST_PATH = "AndroidManifest.xml"
+_MAIN_ACTION = "android.intent.action.MAIN"
+_LAUNCHER_CATEGORY = "android.intent.category.LAUNCHER"
 
 
 def evaluate_component_rules(facts: ManifestFacts) -> list[ApkFinding]:
@@ -53,6 +57,8 @@ def evaluate_signature_rules(signature: SignatureInfo) -> list[ApkFinding]:
 
 def _exported_component_findings(component: ComponentInfo) -> list[ApkFinding]:
     if not component.exported or component.permission:
+        return []
+    if _is_launcher_entry_point(component):
         return []
     return [
         ApkFinding(
@@ -114,20 +120,29 @@ def _provider_findings(component: ComponentInfo) -> list[ApkFinding]:
 
 
 def _deep_link_findings(deep_links: list[DeepLinkInfo]) -> list[ApkFinding]:
+    broad_links = [
+        link
+        for link in deep_links
+        if not link.auto_verify and (not link.host or link.host == "*")
+    ]
+    grouped: dict[tuple[str | None, str | None], list[str]] = defaultdict(list)
+    for link in broad_links:
+        grouped[(link.scheme, link.host)].append(link.component_class)
+
     findings = []
-    for link in deep_links:
-        if link.auto_verify:
-            continue
-        if link.host and link.host != "*":
-            continue
+    for (scheme, host), component_classes in grouped.items():
+        components = sorted(set(component_classes))
+        title = f"Deep link without domain verification: {scheme}://{host or '*'}"
+        if len(components) > 1:
+            title += f" (declared on {len(components)} components, e.g. {components[0]})"
+        else:
+            title += f" on {components[0]}"
+        slug_source = f"{scheme}-{host or 'wildcard'}"
         findings.append(
             ApkFinding(
-                id=f"ANDROID-DEEPLINK-BROAD-{_slug(link.component_class)}",
+                id=f"ANDROID-DEEPLINK-BROAD-{_slug(slug_source)}",
                 rule_id="android.manifest.broad_deep_link",
-                title=(
-                    f"Deep link without domain verification: {link.scheme}://"
-                    f"{link.host or '*'} on {link.component_class}"
-                ),
+                title=title,
                 category="deep_link",
                 severity="medium",
                 status="risk_hypothesis",
@@ -135,14 +150,16 @@ def _deep_link_findings(deep_links: list[DeepLinkInfo]) -> list[ApkFinding]:
                     ApkEvidence(
                         artifact_type="manifest",
                         artifact_path=_MANIFEST_PATH,
-                        location=f"{link.component_class}/intent-filter/data",
-                        quote=f'android:scheme="{link.scheme}" android:host="{link.host or "*"}"',
+                        location=f"{component}/intent-filter/data",
+                        quote=f'android:scheme="{scheme}" android:host="{host or "*"}"',
                     )
+                    for component in components
                 ],
                 impact=(
                     "Without android:autoVerify and App Links domain verification, any "
                     "app can register the same scheme/host and receive URLs intended for "
-                    "this activity, or the activity may accept URLs from unexpected hosts."
+                    "these components, or the components may accept URLs from unexpected "
+                    "hosts."
                 ),
                 recommended_validation=[
                     "Send an implicit VIEW intent for this scheme/host from another app "
@@ -155,6 +172,14 @@ def _deep_link_findings(deep_links: list[DeepLinkInfo]) -> list[ApkFinding]:
             )
         )
     return findings
+
+
+def _is_launcher_entry_point(component: ComponentInfo) -> bool:
+    return any(
+        set(intent_filter.actions) == {_MAIN_ACTION}
+        and set(intent_filter.categories) == {_LAUNCHER_CATEGORY}
+        for intent_filter in component.intent_filters
+    )
 
 
 def _component_evidence(component: ComponentInfo) -> ApkEvidence:

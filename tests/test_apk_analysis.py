@@ -20,6 +20,7 @@ from vulle.apk.models import (
     CertificateInfo,
     ComponentInfo,
     DeepLinkInfo,
+    IntentFilterInfo,
     NetworkSecurityConfigInfo,
     SignatureInfo,
 )
@@ -168,6 +169,30 @@ def test_custom_permissions_are_mapped_with_protection_level() -> None:
     assert len(facts.custom_permissions) == 1
     assert facts.custom_permissions[0].name == "com.example.CUSTOM"
     assert facts.custom_permissions[0].protection_level == "signature"
+
+
+def test_custom_permission_protection_level_hex_is_decoded_to_name() -> None:
+    apk = FakeApk(
+        declared_permissions={
+            "com.example.CUSTOM": {"protectionLevel": "0x00000002"},
+        }
+    )
+
+    facts = extract_manifest_facts(apk)
+
+    assert facts.custom_permissions[0].protection_level == "signature"
+
+
+def test_custom_permission_protection_level_unknown_hex_passes_through() -> None:
+    apk = FakeApk(
+        declared_permissions={
+            "com.example.CUSTOM": {"protectionLevel": "not-a-number"},
+        }
+    )
+
+    facts = extract_manifest_facts(apk)
+
+    assert facts.custom_permissions[0].protection_level == "not-a-number"
 
 
 def test_application_attributes_are_parsed() -> None:
@@ -568,6 +593,83 @@ def test_non_exported_component_is_not_flagged() -> None:
     findings = evaluate_component_rules(facts)
 
     assert findings == []
+
+
+def test_launcher_entry_point_is_not_flagged_as_exported_without_permission() -> None:
+    facts = ManifestFacts(
+        components=[
+            _component(
+                class_name="com.example.MainActivity",
+                intent_filters=[
+                    IntentFilterInfo(
+                        actions=["android.intent.action.MAIN"],
+                        categories=["android.intent.category.LAUNCHER"],
+                    )
+                ],
+            )
+        ]
+    )
+
+    findings = evaluate_component_rules(facts)
+
+    assert findings == []
+
+
+def test_launcher_alias_with_extra_deep_link_still_flags_the_deep_link() -> None:
+    facts = ManifestFacts(
+        components=[
+            _component(
+                component_type="activity-alias",
+                class_name="com.example.MainActivitySeasonal",
+                intent_filters=[
+                    IntentFilterInfo(
+                        actions=["android.intent.action.MAIN"],
+                        categories=["android.intent.category.LAUNCHER"],
+                    )
+                ],
+            )
+        ],
+        deep_links=[
+            DeepLinkInfo(
+                scheme="myapp",
+                host=None,
+                auto_verify=False,
+                component_class="com.example.MainActivitySeasonal",
+            )
+        ],
+    )
+
+    findings = evaluate_component_rules(facts)
+
+    assert not any(
+        f.rule_id == "android.component.exported_without_permission" for f in findings
+    )
+    assert any(f.rule_id == "android.manifest.broad_deep_link" for f in findings)
+
+
+def test_duplicate_broad_deep_links_across_components_are_merged() -> None:
+    facts = ManifestFacts(
+        deep_links=[
+            DeepLinkInfo(
+                scheme="myapp",
+                host=None,
+                auto_verify=False,
+                component_class="com.example.MainActivityJanuary",
+            ),
+            DeepLinkInfo(
+                scheme="myapp",
+                host=None,
+                auto_verify=False,
+                component_class="com.example.MainActivityFebruary",
+            ),
+        ]
+    )
+
+    findings = evaluate_component_rules(facts)
+
+    matching = [f for f in findings if f.rule_id == "android.manifest.broad_deep_link"]
+    assert len(matching) == 1
+    assert len(matching[0].evidence) == 2
 
 
 def test_exported_provider_without_permission_is_flagged_high() -> None:

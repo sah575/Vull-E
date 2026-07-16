@@ -19,6 +19,8 @@ build/
 .vulle/
 reports/
 report.json
+apk-report*.json
+*.apk
 rag-eval.json
 external_sources/
 models/

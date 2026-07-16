@@ -71,7 +71,10 @@ def extract_manifest_facts(apk: Any) -> ManifestFacts:
     components = _extract_components(apk)
     application = _extract_application_attributes(apk)
     custom_permissions = [
-        CustomPermissionInfo(name=name, protection_level=details.get("protectionLevel"))
+        CustomPermissionInfo(
+            name=name,
+            protection_level=_decode_protection_level(details.get("protectionLevel")),
+        )
         for name, details in apk.get_declared_permissions_details().items()
     ]
     return ManifestFacts(
@@ -265,3 +268,27 @@ def _bool_attr(value: str | None) -> bool | None:
     if value is None:
         return None
     return value.strip().lower() == "true"
+
+
+_PROTECTION_LEVEL_BASE_NAMES = {
+    0x0: "normal",
+    0x1: "dangerous",
+    0x2: "signature",
+    0x3: "signatureOrSystem",
+}
+
+
+def _decode_protection_level(raw: str | None) -> str | None:
+    if raw is None:
+        return None
+    try:
+        value = int(raw, 0)
+    except ValueError:
+        return raw
+    base_name = _PROTECTION_LEVEL_BASE_NAMES.get(value & 0xF)
+    if base_name is None:
+        return raw
+    extra_flags = value & ~0xF
+    if extra_flags:
+        return f"{base_name}|0x{extra_flags:x}"
+    return base_name
