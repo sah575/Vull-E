@@ -147,11 +147,11 @@ def _intent_filter(
 
 
 def test_extract_manifest_facts_reads_basic_metadata() -> None:
-    apk = FakeApk(package="com.fibabanka.test", version_name="2.3.1", version_code="42")
+    apk = FakeApk(package="com.example.testbank", version_name="2.3.1", version_code="42")
 
     facts = extract_manifest_facts(apk)
 
-    assert facts.package_name == "com.fibabanka.test"
+    assert facts.package_name == "com.example.testbank"
     assert facts.version_name == "2.3.1"
     assert facts.version_code == "42"
 
@@ -412,7 +412,7 @@ def test_extract_signature_info_flags_debug_certificate() -> None:
 def test_extract_signature_info_does_not_flag_production_certificate() -> None:
     apk = FakeApk(
         certificates=[
-            FakeCertificate(subject="CN=Fibabanka Production", issuer="CN=Fibabanka CA")
+            FakeCertificate(subject="CN=Example Bank Production", issuer="CN=Example Bank CA")
         ]
     )
 
@@ -650,7 +650,7 @@ def test_debug_signer_is_flagged_informational() -> None:
 
 def test_production_signer_is_not_flagged() -> None:
     signature = SignatureInfo(
-        certificates=[CertificateInfo(subject="CN=Fibabanka", is_debug_cert=False)]
+        certificates=[CertificateInfo(subject="CN=Example Bank", is_debug_cert=False)]
     )
 
     assert evaluate_signature_rules(signature) == []
@@ -669,11 +669,14 @@ def test_analyze_apk_static_end_to_end(tmp_path: Path, monkeypatch: pytest.Monke
         archive.writestr("lib/arm64-v8a/libnative.so", b"native")
 
     fake_apk = FakeApk(
-        package="com.fibabanka.Fibabanka.test",
+        package="com.example.testbank.qa",
         tags={
             "application": [_application_tag(debuggable="true", allowBackup="true")],
             "provider": [
-                _element("provider", {"name": "com.fibabanka.ExportedProvider", "exported": "true"})
+                _element(
+                    "provider",
+                    {"name": "com.example.testbank.ExportedProvider", "exported": "true"},
+                )
             ],
         },
         certificates=[
@@ -687,7 +690,7 @@ def test_analyze_apk_static_end_to_end(tmp_path: Path, monkeypatch: pytest.Monke
 
     report = analyze_apk_static(apk_path)
 
-    assert report.metadata.package_name == "com.fibabanka.Fibabanka.test"
+    assert report.metadata.package_name == "com.example.testbank.qa"
     assert report.metadata.dex_files == ["classes.dex"]
     assert report.metadata.native_libraries[0].abi == "arm64-v8a"
     assert any(f.id == "ANDROID-MANIFEST-DEBUGGABLE" for f in report.findings)
