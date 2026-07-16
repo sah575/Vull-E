@@ -68,7 +68,11 @@ def analyze_apk_static(path: Path) -> ApkStaticAnalysisReport:
         ]
         network_endpoints = extract_network_endpoints(dex_analysis)
     except ApkAnalysisTimeoutError:
-        raise
+        analysis_limitations.append(
+            "DEX/bytecode analysis did not complete within "
+            f"{CODE_ANALYSIS_TIMEOUT_SECONDS} seconds and was abandoned; "
+            "TLS/WebView/secret findings are unavailable for this run."
+        )
     except Exception as exc:
         analysis_limitations.append(
             f"Failed to run DEX/bytecode analysis: {exc.__class__.__name__}: {exc}"

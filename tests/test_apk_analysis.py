@@ -1,4 +1,5 @@
 import builtins
+import time
 import xml.etree.ElementTree as ET
 import zipfile
 from datetime import datetime
@@ -1193,3 +1194,30 @@ def test_pipeline_degrades_when_dex_analysis_fails(
     assert any(
         "Failed to run DEX/bytecode analysis" in note for note in report.analysis_limitations
     )
+
+
+def test_pipeline_degrades_instead_of_crashing_when_dex_analysis_times_out(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    apk_path = tmp_path / "sample.apk"
+    with zipfile.ZipFile(apk_path, "w") as archive:
+        archive.writestr("AndroidManifest.xml", b"manifest")
+        archive.writestr("classes.dex", b"dex")
+
+    fake_apk = FakeApk()
+
+    def _slow_dex_analysis(apk: Any) -> Any:
+        time.sleep(0.2)
+        return FakeDexAnalysis()
+
+    monkeypatch.setattr("vulle.apk.pipeline.load_apk", lambda path: fake_apk)
+    monkeypatch.setattr("vulle.apk.pipeline.build_dex_analysis", _slow_dex_analysis)
+    monkeypatch.setattr("vulle.apk.pipeline.CODE_ANALYSIS_TIMEOUT_SECONDS", 0.01)
+
+    report = analyze_apk_static(apk_path)
+
+    assert report.network_endpoints == []
+    assert any(
+        "did not complete within" in note for note in report.analysis_limitations
+    )
+    assert report.metadata.package_name is not None

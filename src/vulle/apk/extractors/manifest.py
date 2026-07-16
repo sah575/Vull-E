@@ -59,12 +59,21 @@ def load_apk(path: Path) -> Any:
             "androguard is required for analyze-apk. "
             "Install with `pip install -e '.[mobile]'`."
         ) from exc
+    _silence_androguard_logging()
     try:
         return APK(str(path))
     except Exception as exc:
         raise VulleError(
             f"Failed to parse APK with androguard: {exc.__class__.__name__}: {exc}"
         ) from exc
+
+
+def _silence_androguard_logging() -> None:
+    try:
+        from loguru import logger
+    except ImportError:
+        return
+    logger.disable("androguard")
 
 
 def extract_manifest_facts(apk: Any) -> ManifestFacts:

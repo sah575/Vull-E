@@ -1,8 +1,7 @@
 import hashlib
+import threading
 import zipfile
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
-from concurrent.futures import TimeoutError as FutureTimeoutError
 from pathlib import Path
 from typing import TypeVar
 
@@ -77,13 +76,25 @@ def compute_sha256(path: Path) -> str:
 
 
 def run_with_timeout(fn: Callable[[], T], *, timeout: float) -> T:
-    executor = ThreadPoolExecutor(max_workers=1)
-    future = executor.submit(fn)
-    try:
-        return future.result(timeout=timeout)
-    except FutureTimeoutError as exc:
+    result: list[T] = []
+    error: list[BaseException] = []
+
+    def _target() -> None:
+        try:
+            result.append(fn())
+        except BaseException as exc:  # noqa: BLE001 - re-raised in the caller's thread
+            error.append(exc)
+
+    worker = threading.Thread(target=_target, daemon=True)
+    worker.start()
+    worker.join(timeout=timeout)
+
+    if worker.is_alive():
+        # The thread cannot be killed; abandon it as a daemon so the interpreter
+        # can still exit promptly instead of waiting for it to finish naturally.
         raise ApkAnalysisTimeoutError(
             f"APK analysis step did not complete within {timeout} seconds"
-        ) from exc
-    finally:
-        executor.shutdown(wait=False)
+        )
+    if error:
+        raise error[0]
+    return result[0]
