@@ -9,6 +9,9 @@ import pytest
 
 from vulle.apk.analyzers.component_rules import evaluate_component_rules, evaluate_signature_rules
 from vulle.apk.analyzers.manifest_rules import evaluate_manifest_rules
+from vulle.apk.analyzers.secret_rules import evaluate_secret_rules, extract_network_endpoints
+from vulle.apk.analyzers.tls_rules import evaluate_tls_rules
+from vulle.apk.analyzers.webview_rules import evaluate_webview_rules
 from vulle.apk.extractors.certificates import extract_signature_info
 from vulle.apk.extractors.manifest import (
     ApplicationAttributes,
@@ -823,3 +826,370 @@ def test_analyze_apk_static_degrades_instead_of_crashing_on_malformed_manifest(
     assert report.metadata.package_name is None
     assert report.metadata.dex_files == ["classes.dex"]
     assert any("Failed to extract manifest facts" in note for note in report.analysis_limitations)
+
+
+# ---------------------------------------------------------------------------
+# Faz 2 test doubles: androguard Analysis/ClassAnalysis/MethodAnalysis/
+# StringAnalysis, implementing only the subset of methods our code calls.
+# ---------------------------------------------------------------------------
+
+
+class FakeInstruction:
+    def __init__(self, name: str, output: str = "") -> None:
+        self._name = name
+        self._output = output
+
+    def get_name(self) -> str:
+        return self._name
+
+    def get_output(self) -> str:
+        return self._output
+
+
+class FakeEncodedMethod:
+    def __init__(self, name: str, instructions: list[FakeInstruction] | None = None) -> None:
+        self._name = name
+        self._instructions = instructions or []
+
+    def get_name(self) -> str:
+        return self._name
+
+    def get_instructions(self) -> Any:
+        return iter(self._instructions)
+
+
+class FakeMethodAnalysis:
+    def __init__(self, encoded_method: FakeEncodedMethod) -> None:
+        self._encoded_method = encoded_method
+
+    def get_method(self) -> FakeEncodedMethod:
+        return self._encoded_method
+
+
+class FakeClassDef:
+    def __init__(self, name: str, interfaces: list[str] | None = None) -> None:
+        self._name = name
+        self._interfaces = interfaces or []
+
+    def get_name(self) -> str:
+        return self._name
+
+    def get_interfaces(self) -> list[str]:
+        return self._interfaces
+
+
+class FakeClassAnalysis:
+    def __init__(
+        self,
+        class_def: FakeClassDef,
+        methods: list[FakeMethodAnalysis] | None = None,
+    ) -> None:
+        self._class_def = class_def
+        self._methods = methods or []
+
+    def get_class(self) -> FakeClassDef:
+        return self._class_def
+
+    def get_methods(self) -> list[FakeMethodAnalysis]:
+        return self._methods
+
+
+class FakeStringAnalysis:
+    def __init__(
+        self,
+        value: str,
+        xrefs: list[tuple[FakeClassAnalysis, FakeMethodAnalysis]] | None = None,
+    ) -> None:
+        self._value = value
+        self._xrefs = xrefs or []
+
+    def get_value(self) -> str:
+        return self._value
+
+    def get_xref_from(self) -> list[tuple[FakeClassAnalysis, FakeMethodAnalysis]]:
+        return self._xrefs
+
+
+class FakeDexAnalysis:
+    def __init__(
+        self,
+        classes: list[FakeClassAnalysis] | None = None,
+        strings: list[FakeStringAnalysis] | None = None,
+    ) -> None:
+        self._classes = classes or []
+        self._strings = strings or []
+
+    def get_classes(self) -> list[FakeClassAnalysis]:
+        return self._classes
+
+    def get_strings(self) -> list[FakeStringAnalysis]:
+        return self._strings
+
+
+# ---------------------------------------------------------------------------
+# analyzers/tls_rules.py
+# ---------------------------------------------------------------------------
+
+
+def test_tls_rules_flags_trivially_permissive_trust_manager() -> None:
+    method = FakeEncodedMethod("checkServerTrusted", [FakeInstruction("return-void")])
+    class_def = FakeClassDef(
+        "Lcom/example/InsecureTrustManager;",
+        interfaces=["Ljavax/net/ssl/X509TrustManager;"],
+    )
+    analysis = FakeDexAnalysis(
+        classes=[FakeClassAnalysis(class_def, methods=[FakeMethodAnalysis(method)])]
+    )
+
+    findings = evaluate_tls_rules(analysis)
+
+    assert any(f.rule_id == "android.tls.permissive_trust_manager" for f in findings)
+
+
+def test_tls_rules_does_not_flag_trust_manager_with_throw() -> None:
+    method = FakeEncodedMethod(
+        "checkServerTrusted",
+        [FakeInstruction("invoke-virtual", "Ljava/security/cert/CertificateException;"),
+         FakeInstruction("throw")],
+    )
+    class_def = FakeClassDef(
+        "Lcom/example/RealTrustManager;",
+        interfaces=["Ljavax/net/ssl/X509TrustManager;"],
+    )
+    analysis = FakeDexAnalysis(
+        classes=[FakeClassAnalysis(class_def, methods=[FakeMethodAnalysis(method)])]
+    )
+
+    findings = evaluate_tls_rules(analysis)
+
+    assert findings == []
+
+
+def test_tls_rules_flags_ssl_error_handler_proceed() -> None:
+    method = FakeEncodedMethod(
+        "onReceivedSslError",
+        [FakeInstruction("invoke-virtual", "Landroid/webkit/SslErrorHandler;->proceed()V")],
+    )
+    class_def = FakeClassDef("Lcom/example/InsecureWebViewClient;")
+    analysis = FakeDexAnalysis(
+        classes=[FakeClassAnalysis(class_def, methods=[FakeMethodAnalysis(method)])]
+    )
+
+    findings = evaluate_tls_rules(analysis)
+
+    assert any(
+        f.rule_id == "android.webview.ssl_error_proceed"
+        and f.status == "confirmed_static_misconfiguration"
+        for f in findings
+    )
+
+
+def test_tls_rules_does_not_flag_ssl_error_handler_that_cancels() -> None:
+    method = FakeEncodedMethod(
+        "onReceivedSslError",
+        [FakeInstruction("invoke-virtual", "Landroid/webkit/SslErrorHandler;->cancel()V")],
+    )
+    class_def = FakeClassDef("Lcom/example/SafeWebViewClient;")
+    analysis = FakeDexAnalysis(
+        classes=[FakeClassAnalysis(class_def, methods=[FakeMethodAnalysis(method)])]
+    )
+
+    findings = evaluate_tls_rules(analysis)
+
+    assert findings == []
+
+
+# ---------------------------------------------------------------------------
+# analyzers/webview_rules.py
+# ---------------------------------------------------------------------------
+
+
+def test_webview_rules_flags_js_interface_with_javascript_enabled() -> None:
+    method = FakeEncodedMethod(
+        "setup",
+        [
+            FakeInstruction(
+                "invoke-virtual", "Landroid/webkit/WebSettings;->setJavaScriptEnabled(Z)V"
+            ),
+            FakeInstruction(
+                "invoke-virtual",
+                "Landroid/webkit/WebView;->addJavascriptInterface(Ljava/lang/Object;"
+                "Ljava/lang/String;)V",
+            ),
+        ],
+    )
+    class_def = FakeClassDef("Lcom/example/MainActivity;")
+    analysis = FakeDexAnalysis(
+        classes=[FakeClassAnalysis(class_def, methods=[FakeMethodAnalysis(method)])]
+    )
+
+    findings = evaluate_webview_rules(analysis)
+
+    assert any(
+        f.rule_id == "android.webview.js_bridge_with_javascript_enabled" for f in findings
+    )
+
+
+def test_webview_rules_flags_interface_only_as_informational() -> None:
+    method = FakeEncodedMethod(
+        "setup",
+        [
+            FakeInstruction(
+                "invoke-virtual",
+                "Landroid/webkit/WebView;->addJavascriptInterface(Ljava/lang/Object;"
+                "Ljava/lang/String;)V",
+            ),
+        ],
+    )
+    class_def = FakeClassDef("Lcom/example/MainActivity;")
+    analysis = FakeDexAnalysis(
+        classes=[FakeClassAnalysis(class_def, methods=[FakeMethodAnalysis(method)])]
+    )
+
+    findings = evaluate_webview_rules(analysis)
+
+    assert any(
+        f.rule_id == "android.webview.js_interface" and f.status == "informational"
+        for f in findings
+    )
+
+
+def test_webview_rules_does_not_flag_class_without_webview_calls() -> None:
+    method = FakeEncodedMethod("unrelated", [FakeInstruction("return-void")])
+    class_def = FakeClassDef("Lcom/example/Unrelated;")
+    analysis = FakeDexAnalysis(
+        classes=[FakeClassAnalysis(class_def, methods=[FakeMethodAnalysis(method)])]
+    )
+
+    findings = evaluate_webview_rules(analysis)
+
+    assert findings == []
+
+
+# ---------------------------------------------------------------------------
+# analyzers/secret_rules.py
+# ---------------------------------------------------------------------------
+
+
+def test_secret_rules_flags_known_pattern_with_redacted_evidence() -> None:
+    # Built via concatenation so no secret-scanner-shaped literal appears in source.
+    secret_value = "AKIA" + "ABCDEFGHIJKLMNOP"
+    class_def = FakeClassDef("Lcom/example/Config;")
+    method = FakeEncodedMethod("init")
+    string_analysis = FakeStringAnalysis(
+        secret_value,
+        xrefs=[(FakeClassAnalysis(class_def), FakeMethodAnalysis(method))],
+    )
+    analysis = FakeDexAnalysis(strings=[string_analysis])
+
+    findings = evaluate_secret_rules(analysis)
+
+    assert len(findings) == 1
+    assert findings[0].rule_id == "android.secrets.aws_access_key"
+    assert secret_value not in findings[0].evidence[0].quote
+    assert secret_value not in findings[0].id
+
+
+def test_secret_rules_never_includes_raw_secret_value_in_evidence() -> None:
+    # Built via concatenation so no secret-scanner-shaped literal appears in source.
+    secret_value = "glpat-" + "ABCDEFGHIJKLMNOPQRST"
+    string_analysis = FakeStringAnalysis(secret_value)
+    analysis = FakeDexAnalysis(strings=[string_analysis])
+
+    findings = evaluate_secret_rules(analysis)
+
+    for finding in findings:
+        for evidence in finding.evidence:
+            assert secret_value not in evidence.quote
+            assert secret_value not in evidence.artifact_path
+            assert secret_value not in evidence.location
+
+
+def test_secret_rules_does_not_flag_plain_sentence() -> None:
+    string_analysis = FakeStringAnalysis("Please enter your username and password")
+    analysis = FakeDexAnalysis(strings=[string_analysis])
+
+    findings = evaluate_secret_rules(analysis)
+
+    assert findings == []
+
+
+def test_network_endpoints_are_deduplicated_and_not_findings() -> None:
+    analysis = FakeDexAnalysis(
+        strings=[
+            FakeStringAnalysis("https://api.example.com/v1/login"),
+            FakeStringAnalysis("https://api.example.com/v1/login"),
+            FakeStringAnalysis("https://api.example.com/v1/logout"),
+        ]
+    )
+
+    endpoints = extract_network_endpoints(analysis)
+    findings = evaluate_secret_rules(analysis)
+
+    assert endpoints == [
+        "https://api.example.com/v1/login",
+        "https://api.example.com/v1/logout",
+    ]
+    assert findings == []
+
+
+# ---------------------------------------------------------------------------
+# pipeline.py — Faz 2 integration
+# ---------------------------------------------------------------------------
+
+
+def test_analyze_apk_static_includes_code_analysis_findings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    apk_path = tmp_path / "sample.apk"
+    with zipfile.ZipFile(apk_path, "w") as archive:
+        archive.writestr("AndroidManifest.xml", b"manifest")
+        archive.writestr("classes.dex", b"dex")
+
+    fake_apk = FakeApk(tags={"application": [_application_tag(allowBackup="false")]})
+    ssl_method = FakeEncodedMethod(
+        "onReceivedSslError",
+        [FakeInstruction("invoke-virtual", "Landroid/webkit/SslErrorHandler;->proceed()V")],
+    )
+    fake_dex_analysis = FakeDexAnalysis(
+        classes=[
+            FakeClassAnalysis(
+                FakeClassDef("Lcom/example/InsecureWebViewClient;"),
+                methods=[FakeMethodAnalysis(ssl_method)],
+            )
+        ],
+        strings=[FakeStringAnalysis("https://backend.example.com/api")],
+    )
+    monkeypatch.setattr("vulle.apk.pipeline.load_apk", lambda path: fake_apk)
+    monkeypatch.setattr(
+        "vulle.apk.pipeline.build_dex_analysis", lambda apk: fake_dex_analysis
+    )
+
+    report = analyze_apk_static(apk_path)
+
+    assert any(f.rule_id == "android.webview.ssl_error_proceed" for f in report.findings)
+    assert report.network_endpoints == ["https://backend.example.com/api"]
+
+
+def test_pipeline_degrades_when_dex_analysis_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    apk_path = tmp_path / "sample.apk"
+    with zipfile.ZipFile(apk_path, "w") as archive:
+        archive.writestr("AndroidManifest.xml", b"manifest")
+        archive.writestr("classes.dex", b"dex")
+
+    fake_apk = FakeApk()
+
+    def _broken_dex_analysis(apk: Any) -> Any:
+        raise RuntimeError("dex parsing exploded")
+
+    monkeypatch.setattr("vulle.apk.pipeline.load_apk", lambda path: fake_apk)
+    monkeypatch.setattr("vulle.apk.pipeline.build_dex_analysis", _broken_dex_analysis)
+
+    report = analyze_apk_static(apk_path)
+
+    assert report.network_endpoints == []
+    assert any(
+        "Failed to run DEX/bytecode analysis" in note for note in report.analysis_limitations
+    )

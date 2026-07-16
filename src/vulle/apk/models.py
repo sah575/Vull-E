@@ -106,7 +106,7 @@ class CustomPermissionInfo(BaseModel):
 
 
 class ApkEvidence(BaseModel):
-    artifact_type: Literal["manifest", "certificate", "zip_entry"]
+    artifact_type: Literal["manifest", "certificate", "zip_entry", "dex_code"]
     artifact_path: str
     location: str
     quote: str
@@ -138,4 +138,5 @@ class ApkStaticAnalysisReport(BaseModel):
         default_factory=NetworkSecurityConfigInfo
     )
     findings: list[ApkFinding] = Field(default_factory=list)
+    network_endpoints: list[str] = Field(default_factory=list)
     analysis_limitations: list[str] = Field(default_factory=list)
