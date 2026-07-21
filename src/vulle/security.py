@@ -101,6 +101,13 @@ def redact_text(
     return redacted
 
 
+def find_secret_like_matches(text: str) -> list[str]:
+    matches: list[str] = []
+    for pattern in _SECRET_PATTERNS:
+        matches.extend(match.group(0) for match in pattern.finditer(text))
+    return matches
+
+
 def redact_data(
     value: Any,
     *,

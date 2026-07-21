@@ -28,6 +28,9 @@ mobile = [
   "androguard>=4.1.0,<5",
   "pyelftools>=0.31",
 ]
+dynamic = [
+  "mitmproxy>=11,<13",
+]
 embedding-server = [
   "fastapi>=0.115.0",
   "sentence-transformers>=3.0.0",
@@ -80,4 +83,8 @@ exclude_dirs = ["tests", ".venv"]
 
 [[tool.mypy.overrides]]
 module = ["androguard.*", "loguru.*", "elftools.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["mitmproxy.*"]
 ignore_missing_imports = true

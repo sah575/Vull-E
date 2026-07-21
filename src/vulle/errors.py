@@ -54,6 +54,14 @@ class ApkAnalysisTimeoutError(VulleError):
     pass
 
 
+class AdbCommandError(VulleError):
+    pass
+
+
+class AdbTimeoutError(VulleError):
+    pass
+
+
 def tls_verify(*, verify_ssl: bool, ca_bundle: Path | None) -> bool | ssl.SSLContext:
     if not verify_ssl:
         return False

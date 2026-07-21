@@ -55,6 +55,17 @@ AUDIT_LOG_OPTION = typer.Option(
     "--audit-log",
     help="Write non-secret structured JSONL audit events to this file.",
 )
+FLOW_FILE_OPTION = typer.Option(
+    None,
+    "--flow-file",
+    help="mitmweb-exported .mitm HTTP flow capture to use as additional evidence.",
+)
+SESSION_DIR_OPTION = typer.Option(None, help="Per-session screenshot/UI dump directory.")
+_DEFAULT_CRAWLER_DENYLIST = [
+    "onayla", "onay", "confirm", "confirmed", "transfer", "gönder", "gonder", "send",
+    "sil", "delete", "sildim", "submit", "kaydet", "save", "ödeme", "odeme", "pay",
+    "payment", "kabul et", "accept", "evet", "yes", "tamam", "ok", "devam", "proceed",
+]
 
 
 @app.callback()
@@ -85,6 +96,7 @@ def analyze_jira(
     ask_confluence_url: bool = ASK_CONFLUENCE_URL_OPTION,
     debug: bool = DEBUG_OPTION,
     audit_log: Path | None = AUDIT_LOG_OPTION,
+    flow_file: Path | None = FLOW_FILE_OPTION,
 ) -> None:
     """Fetch a Jira issue and analyze it with the local LLM."""
     render_banner(console)
@@ -104,7 +116,8 @@ def analyze_jira(
         manual_urls=confluence_url or [],
         ask_for_url=ask_confluence_url,
     )
-    analysis = analyze_jira_issue(issue, confluence_pages)
+    http_flows = _load_http_flows(flow_file)
+    analysis = analyze_jira_issue(issue, confluence_pages, http_flows=http_flows)
     _emit_json(analysis.model_dump(), output)
 
 
@@ -126,6 +139,55 @@ def analyze_apk(path: Path, output: Path | None = None) -> None:
     from vulle.apk.pipeline import analyze_apk_static
 
     report = analyze_apk_static(path)
+    _emit_json(report.model_dump(), output)
+
+
+@app.command("analyze-traffic")
+def analyze_traffic(path: Path, output: Path | None = None) -> None:
+    """Run deterministic checks over a captured .mitm HTTP flow file (no LLM, no Jira)."""
+    render_banner(console)
+    from vulle.dynamic.pipeline import analyze_traffic_file
+
+    report = analyze_traffic_file(path)
+    _emit_json(report.model_dump(), output)
+
+
+@app.command("dynamic-crawl")
+def dynamic_crawl(
+    package: str,
+    max_actions: int = typer.Option(30, help="Hard cap on total adb actions this session."),
+    device: str | None = typer.Option(None, "--device", "-s", help="adb device serial."),
+    session_dir: Path | None = SESSION_DIR_OPTION,
+    output: Path | None = None,
+) -> None:
+    """Guardrailed automatic UI crawl of a rooted Android emulator via adb.
+
+    Requires explicit confirmation before it taps anything; there is no --yes
+    bypass, and every adb action is written to the audit log.
+    """
+    render_banner(console)
+    from vulle.dynamic.adb import AdbClient
+    from vulle.dynamic.crawler import run_crawl_session
+    from vulle.dynamic.models import CrawlSessionConfig
+
+    settings = get_settings()
+    resolved_session_dir = session_dir or (settings.dynamic_session_dir / package)
+    config = CrawlSessionConfig(
+        package=package,
+        max_actions=max_actions,
+        device_serial=device,
+        kill_switch_path=settings.dynamic_crawler_kill_switch_path,
+        denylist_keywords=_DEFAULT_CRAWLER_DENYLIST,
+        tap_settle_seconds=settings.dynamic_crawler_tap_settle_seconds,
+        session_dir=resolved_session_dir,
+    )
+    console.print(
+        f"[yellow]About to actively tap through '{package}' on device "
+        f"{device or 'default'} for up to {max_actions} adb actions. "
+        f"Kill switch: create {config.kill_switch_path} to stop early.[/yellow]"
+    )
+    typer.confirm("Continue?", abort=True)
+    report = run_crawl_session(config, AdbClient(settings, device_serial=device), settings)
     _emit_json(report.model_dump(), output)
 
 
@@ -309,6 +371,16 @@ def doctor(
     _emit_json(report.model_dump(), output)
     if not report.healthy:
         raise typer.Exit(code=1)
+
+
+def _load_http_flows(flow_file: Path | None) -> list[Any]:
+    if flow_file is None:
+        return []
+    from vulle.dynamic.flow_ingestion import load_http_flows
+
+    flows = load_http_flows(flow_file)
+    console.print(f"[cyan]Loaded {len(flows)} captured HTTP flow(s) from {flow_file}.[/cyan]")
+    return flows
 
 
 def _issue_from_file_payload(payload: dict[str, Any]) -> JiraIssue:

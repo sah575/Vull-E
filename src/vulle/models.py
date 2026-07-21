@@ -68,6 +68,26 @@ class SecurityFacet(BaseModel):
     terms: list[str] = Field(default_factory=list)
 
 
+class HttpHeader(BaseModel):
+    name: str
+    value: str
+
+
+class HttpFlow(BaseModel):
+    id: str
+    method: str
+    url: str
+    host: str
+    scheme: Literal["http", "https"]
+    status_code: int | None = None
+    request_headers: list[HttpHeader] = Field(default_factory=list)
+    request_body: str | None = None
+    response_headers: list[HttpHeader] = Field(default_factory=list)
+    response_body: str | None = None
+    timestamp: float | None = None
+    source: Literal["manual_capture", "crawler_capture"] = "manual_capture"
+
+
 EvidenceType = Literal[
     "system_fact",
     "business_requirement",
@@ -96,6 +116,7 @@ class AnalysisMetadata(BaseModel):
     environment: str
     knowledge_base_id: str
     confluence_pages_loaded: int = 0
+    http_flows_loaded: int = 0
 
 
 class RiskHypothesis(BaseModel):
@@ -143,6 +164,7 @@ class JiraSecurityAnalysis(BaseModel):
 class GraphState(BaseModel):
     issue: JiraIssue
     confluence_pages: list[ConfluencePage] = Field(default_factory=list)
+    http_flows: list[HttpFlow] = Field(default_factory=list)
     rag_context: list[RagChunk] = Field(default_factory=list)
     rag_status: Literal["not_configured", "ok", "empty", "failed"] = "not_configured"
     rag_error: str | None = None

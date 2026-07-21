@@ -74,6 +74,15 @@ class Settings(BaseSettings):
     rag_follow_symlinks: bool = False
     rag_index_schema_version: int = Field(default=2, gt=0)
 
+    llm_traffic_context_chars: int = Field(default=8000, gt=1000)
+
+    adb_binary: str = "adb"
+    adb_command_timeout_seconds: int = Field(default=30, gt=0)
+    dynamic_crawler_kill_switch_path: Path = Path(".vulle/CRAWLER_STOP")
+    dynamic_crawler_max_actions_default: int = Field(default=30, gt=0)
+    dynamic_crawler_tap_settle_seconds: float = Field(default=1.5, gt=0.0)
+    dynamic_session_dir: Path = Path(".vulle/dynamic-sessions")
+
     @field_validator("http_ca_bundle", mode="before")
     @classmethod
     def empty_ca_bundle_is_none(cls, value: object) -> object:

@@ -1,11 +1,13 @@
 from vulle.agents.jira_analysis import (
     _evidence_context,
     _quote_is_valid,
+    _source_catalog,
     _validate_evidence_references,
 )
 from vulle.models import (
     EvidenceReference,
     GraphState,
+    HttpFlow,
     JiraIssue,
     JiraSecurityAnalysis,
     RiskHypothesis,
@@ -350,3 +352,44 @@ def test_jira_comments_are_assumptions_not_system_facts() -> None:
     assert context["jira:BANK-8:summary"]["evidence_type"] == "business_requirement"
     assert context["jira:BANK-8:description"]["evidence_type"] == "business_requirement"
     assert context["jira:BANK-8:comments"]["evidence_type"] == "assumption"
+
+
+def _sample_flow() -> HttpFlow:
+    return HttpFlow(
+        id="flow-1",
+        method="GET",
+        url="https://api.bank.test/accounts/123",
+        host="api.bank.test",
+        scheme="https",
+        status_code=200,
+    )
+
+
+def test_captured_traffic_is_added_as_source_catalog_entry() -> None:
+    issue = JiraIssue(key="BANK-9", summary="New transfer endpoint")
+    state = GraphState(issue=issue, http_flows=[_sample_flow()])
+
+    catalog = _source_catalog(state)
+
+    assert "traffic:flow-1" in catalog
+    assert "api.bank.test" in catalog["traffic:flow-1"]
+
+
+def test_captured_traffic_is_added_as_system_fact_evidence() -> None:
+    issue = JiraIssue(key="BANK-10", summary="New transfer endpoint")
+    state = GraphState(issue=issue, http_flows=[_sample_flow()])
+
+    context = _evidence_context(state)
+
+    assert context["traffic:flow-1"]["evidence_type"] == "system_fact"
+    assert "api.bank.test" in context["traffic:flow-1"]["text"]
+
+
+def test_captured_traffic_evidence_quote_is_citable() -> None:
+    issue = JiraIssue(key="BANK-11", summary="New transfer endpoint")
+    state = GraphState(issue=issue, http_flows=[_sample_flow()])
+
+    context = _evidence_context(state)
+    quote = "GET https://api.bank.test/accounts/123 (host api.bank.test, scheme https)"
+
+    assert _quote_is_valid(quote, context["traffic:flow-1"]["text"])
